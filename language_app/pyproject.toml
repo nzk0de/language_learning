@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal_language_learning"
+version = "0.1.0"
+description = "Language learning API with FastAPI, Hugging Face, spaCy, and Elasticsearch"
+authors = [{name="Your Name"}]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "transformers",
+    "torch",
+    "spacy",
+    "tiktoken",
+    "protobuf",
+    "sentencepiece",
+    # "psycopg2-binary",
+    "elasticsearch<9,>=8",
+    "wordfreq",
+    "langdetect",
+    "pytest",
+    "httpx"
+]
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "flake8",
+    "mypy",
+    "isort",
+    "pytest",
+]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+
+[tool.black]
+line-length = 99
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 99
+
+
+
+[tool.mypy]
+python_version = "3.11"
+disallow_untyped_defs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+strict_optional = true
