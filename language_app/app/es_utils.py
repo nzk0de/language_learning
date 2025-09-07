@@ -26,6 +26,7 @@ class ElasticHelper:
         index_name = f"sentences_{lang}"
         if not self.client.indices.exists(index=index_name):
             self.client.indices.create(index=index_name)
+
         return index_name
 
     def insert_text(self, text: str, lang: str):
@@ -46,6 +47,6 @@ class ElasticHelper:
         return {"inserted": len(sentences), "lang": lang}
 
     def search_examples(self, word: str, lang: str, limit: int = 5):
-        index_name = f"sentences_{lang}"
+        index_name = self.ensure_index(lang)
         res = self.client.search(index=index_name, query={"match": {"sentence": word}}, size=limit)
         return [hit["_source"]["sentence"] for hit in res["hits"]["hits"]]

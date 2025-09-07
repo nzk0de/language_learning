@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware  # Add this import
 
 from app.es_utils import ElasticHelper
 from app.schema import InputText, InsertText
@@ -85,3 +86,12 @@ def translate_search(
     results = elastic.search_examples(translated, tgt_lang, limit)
 
     return {"source_word": word, "translated_word": translated, "examples": results}
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React development server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

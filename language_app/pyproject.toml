@@ -21,7 +21,10 @@ dependencies = [
     "wordfreq",
     "langdetect",
     "pytest",
-    "httpx"
+    "httpx",
+    "optimum[onnxruntime]",
+    "onnxruntime",
+    "python-dotenv",
 ]
 [project.optional-dependencies]
 dev = [
