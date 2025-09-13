@@ -5,14 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware  # Add this import
 
 from app.es_utils import ElasticHelper
 from app.schema import InputText, InsertText, TranslateAndStoreText
-from app.translation import Translator
+from app.translation import MYTranslator
 from app.validators import validate_sentence, validate_word
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        app.state.translator = Translator()
+        app.state.translator = MYTranslator()
         app.state.elastic = ElasticHelper()
         yield
     finally:
@@ -34,17 +34,19 @@ def get_elastic():
 
 # ---------- Endpoints ----------
 @app.post("/translate")
-async def translate(item: InputText, translator: Translator = Depends(get_translator)):
+async def translate(item: InputText, translator: MYTranslator = Depends(get_translator)):
     if item.src_lang not in translator.lang_codes or item.tgt_lang not in translator.lang_codes:
         return {"error": f"Invalid lang code. Supported: {sorted(translator.lang_codes)}"}
     
+    # Preprocess the text to clean it before translation
+    cleaned_text = translator.clean_text(item.text)
     # Use the new async translate method
-    translation = await translator.translate(item.text, src=item.src_lang, dest=item.tgt_lang)
+    translation = await translator.translate(cleaned_text, src=item.src_lang, dest=item.tgt_lang)
     return {"translation": translation}
 
 
 @app.get("/languages")
-def get_languages(translator: Translator = Depends(get_translator)):
+def get_languages(translator: MYTranslator = Depends(get_translator)):
     return {
         "languages": translator.supported_languages,
         "language_codes": sorted(translator.lang_codes),
@@ -62,7 +64,7 @@ def insert(item: InsertText, elastic: ElasticHelper = Depends(get_elastic)):
 @app.post("/translate_and_store")
 async def translate_and_store(
     item: TranslateAndStoreText, 
-    translator: Translator = Depends(get_translator),
+    translator: MYTranslator = Depends(get_translator),
     elastic: ElasticHelper = Depends(get_elastic)
 ):
     """Translate text and store both original and translation in Elasticsearch"""
@@ -108,7 +110,7 @@ async def translate_search(
     src_lang: str = "en",
     tgt_lang: str = "de",
     limit: int = 5,
-    translator: Translator = Depends(get_translator),
+    translator: MYTranslator = Depends(get_translator),
     elastic: ElasticHelper = Depends(get_elastic),
 ):
     # ✅ Validate input is a real single word in source language
@@ -146,6 +148,9 @@ def search_with_translations(
     
     results = elastic.search_translation_pairs(word, lang, limit)
     return {"word": word, "examples": results}
+
+
+
 
 
 app.add_middleware(

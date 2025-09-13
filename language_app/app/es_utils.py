@@ -1,36 +1,33 @@
 import hashlib
 import os
 import re
-
-import spacy
 from elasticsearch import Elasticsearch, helpers
-
-
-class NLPProcessor:
-    def __init__(self):
-        try:
-            self.nlp = spacy.load("de_core_news_sm")
-        except OSError:
-            print("Warning: German spaCy model not found. Using simple sentence splitting.")
-            self.nlp = None
-
-    def clean_and_split(self, text: str) -> list[str]:
-        text = re.sub(r"\.{2,}", ".", text)  # collapse multiple dots
-        text = re.sub(r"\s+", " ", text).strip()  # normalize whitespace
-        
-        if self.nlp:
-            doc = self.nlp(text)
-            return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
-        else:
-            # Simple sentence splitting as fallback
-            sentences = re.split(r'[.!?]+', text)
-            return [sent.strip() for sent in sentences if sent.strip()]
-
+import stanza
 
 class ElasticHelper:
     def __init__(self):
         self.client = Elasticsearch(os.getenv("ES_HOST", "http://localhost:9200"))
-        self.nlp = NLPProcessor()
+        # Initialize Stanza pipeline once
+        try:
+            self.stanza_nlp = stanza.Pipeline('en', processors='tokenize', verbose=False)
+        except:
+            self.stanza_nlp = None
+
+    def split_sentences(self, text: str) -> list[str]:
+        """Split text into sentences using Stanza"""
+        if not text.strip():
+            return []
+        
+        if self.stanza_nlp:
+            try:
+                doc = self.stanza_nlp(text)
+                return [sent.text.strip() for sent in doc.sentences if sent.text.strip()]
+            except:
+                pass
+        
+        # Fallback to regex splitting
+        sentences = re.split(r'[.!?]+\s+', text)
+        return [s.strip() for s in sentences if s.strip()]
 
     def ensure_index(self, lang: str):
         index_name = f"sentences_{lang}"
@@ -42,7 +39,7 @@ class ElasticHelper:
     def insert_text(self, text: str, lang: str):
         """Insert text without translation - original functionality"""
         index_name = self.ensure_index(lang)
-        sentences = self.nlp.clean_and_split(text)
+        sentences = self.split_sentences(text)
         actions = []
         for s in sentences:
             doc_id = hashlib.sha256(f"{lang}:{s}".encode("utf-8")).hexdigest()
@@ -65,8 +62,8 @@ class ElasticHelper:
         tgt_index = self.ensure_index(tgt_lang)
         
         # Split both texts into sentences
-        original_sentences = self.nlp.clean_and_split(original_text)
-        translated_sentences = self.nlp.clean_and_split(translated_text)
+        original_sentences = self.split_sentences(original_text)
+        translated_sentences = self.split_sentences(translated_text)
         
         actions = []
         inserted_pairs = 0

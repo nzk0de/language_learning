@@ -14,6 +14,8 @@ dependencies = [
     "transformers",
     "torch",
     "spacy",
+    "stanza",
+    "syntok",
     # "psycopg2-binary",
     "elasticsearch<9,>=8",
     "wordfreq",
