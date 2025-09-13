@@ -1,0 +1,187 @@
+/* YouTube Translator Extension Styles */
+
+#yt-translator-panel {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 400px;
+  max-height: 600px;
+  background: #1f1f1f;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: white;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  z-index: 10000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.translator-header {
+  background: #ff0000;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.translator-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+#close-translator {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+}
+
+#close-translator:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.translator-controls {
+  padding: 16px;
+  border-bottom: 1px solid #333;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#target-language {
+  background: #333;
+  color: white;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  flex: 1;
+  min-width: 100px;
+}
+
+.translator-controls button {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.translator-controls button:hover {
+  background: #45a049;
+}
+
+#auto-translate-btn {
+  background: #2196F3;
+}
+
+#auto-translate-btn:hover {
+  background: #1976D2;
+}
+
+.translator-content {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.subtitle-section, .translation-section {
+  padding: 16px;
+  border-bottom: 1px solid #333;
+}
+
+.subtitle-section:last-child, .translation-section:last-child {
+  border-bottom: none;
+}
+
+.subtitle-section h4, .translation-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #ccc;
+  font-weight: 500;
+}
+
+.subtitle-text {
+  background: #2a2a2a;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  border-left: 3px solid #ff0000;
+  min-height: 40px;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.translation-section .subtitle-text {
+  border-left-color: #4CAF50;
+}
+
+.translator-status {
+  padding: 12px 16px;
+  background: #2a2a2a;
+  border-top: 1px solid #333;
+}
+
+#status-message {
+  font-size: 12px;
+  color: #ccc;
+  text-align: center;
+}
+
+/* Scrollbar styling */
+.subtitle-text::-webkit-scrollbar, .translator-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.subtitle-text::-webkit-scrollbar-track, .translator-content::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.subtitle-text::-webkit-scrollbar-thumb, .translator-content::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 3px;
+}
+
+.subtitle-text::-webkit-scrollbar-thumb:hover, .translator-content::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+/* YouTube button integration */
+#yt-translator-btn:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+#yt-translator-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  #yt-translator-panel {
+    width: 90vw;
+    right: 5vw;
+    top: 10px;
+  }
+  
+  .translator-controls {
+    flex-direction: column;
+  }
+  
+  .translator-controls button {
+    width: 100%;
+  }
+}

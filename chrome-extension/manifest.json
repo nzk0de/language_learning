@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Language Translator",
+  "version": "1.0.0",
+  "description": "Extract YouTube subtitles and translate them using your language learning API",
+  
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "http://localhost:8000/*"
+  ],
+  
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/watch*"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ],
+  
+  "background": {
+    "service_worker": "background.js"
+  },
+  
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "YouTube Translator"
+  },
+  
+  "web_accessible_resources": [
+    {
+      "resources": ["translator-panel.html"],
+      "matches": ["https://www.youtube.com/*"]
+    }
+  ]
+}
