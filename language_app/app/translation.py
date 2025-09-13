@@ -33,7 +33,6 @@ class MYTranslator:
         result = self.translator.translate(text, src=src, dest=dest)
         return result.text
 
-
     def translate_sync(self, text: str, src_lang: str, tgt_lang: str) -> str:
         """Synchronous version for backward compatibility"""
         return self._sync_translate(text, src_lang, tgt_lang)

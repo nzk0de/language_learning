@@ -1,5 +1,5 @@
 import { ArrowRightLeft, Book, Languages, Loader2, Plus, Search, Volume2, VolumeX, Square, Maximize2, X, Eye } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 const LanguageTranslatorApp = () => {
   // State management
@@ -47,8 +47,17 @@ const LanguageTranslatorApp = () => {
     translatedText: '',
     srcLang: '',
     tgtLang: '',
-    title: 'Reading View'
+    title: 'Reading View',
+    youtubeVideoId: null,
+    youtubeStartTime: null,
+    youtubeOnly: false
   });
+
+  // Refs and state for synchronized scrolling in reading view
+  const originalScrollRef = useRef(null);
+  const translatedScrollRef = useRef(null);
+  const isScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef(null);
 
   const API_BASE = 'http://localhost:8000';
 
@@ -135,14 +144,17 @@ const LanguageTranslatorApp = () => {
   };
 
   // Reading view functions
-  const openReadingView = (originalText, translatedText, srcLang, tgtLang, title = 'Reading View') => {
+  const openReadingView = (originalText, translatedText, srcLang, tgtLang, title = 'Reading View', youtubeVideoId = null, youtubeStartTime = null, youtubeOnly = false) => {
     setReadingView({
       isOpen: true,
       originalText,
       translatedText,
       srcLang,
       tgtLang,
-      title
+      title,
+      youtubeVideoId,
+      youtubeStartTime,
+      youtubeOnly
     });
   };
 
@@ -153,7 +165,10 @@ const LanguageTranslatorApp = () => {
       translatedText: '',
       srcLang: '',
       tgtLang: '',
-      title: 'Reading View'
+      title: 'Reading View',
+      youtubeVideoId: null,
+      youtubeStartTime: null,
+      youtubeOnly: false
     });
   };
 
@@ -442,13 +457,85 @@ const LanguageTranslatorApp = () => {
     );
   };
 
+  // Helper function to extract YouTube video ID from URL
+  const extractYouTubeVideoId = (url) => {
+    if (!url) return null;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+  };
+
+  // Helper function to extract start time from YouTube URL
+  const extractYouTubeStartTime = (url) => {
+    if (!url) return null;
+    const regExp = /[?&]t=([^&]*)/;
+    const match = url.match(regExp);
+    return match ? match[1] : null;
+  };
+
+  // Auto-fill YouTube inputs when translation text changes
+  const handleTranslationTextChange = (text) => {
+    setTranslationText(text);
+    
+    // Auto-fill YouTube fields if they exist and are empty
+    const youtubeOriginalTextEl = document.getElementById('videoOriginalText');
+    const youtubeTitleEl = document.getElementById('videoTitle');
+    
+    if (youtubeOriginalTextEl && !youtubeOriginalTextEl.value && text.trim()) {
+      youtubeOriginalTextEl.value = text;
+    }
+    
+    if (youtubeTitleEl && youtubeTitleEl.value === 'YouTube Video Learning Session' && text.trim()) {
+      youtubeTitleEl.value = text.length > 50 ? text.substring(0, 50) + '...' : text;
+    }
+  };
+
+  // Synchronized scrolling function
+  const handleScroll = (sourceRef, targetRef) => {
+    if (isScrollingRef.current) return;
+    
+    const source = sourceRef.current;
+    const target = targetRef.current;
+    
+    if (!source || !target) return;
+    
+    // Clear any existing timeout
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+    
+    // Set scrolling flag
+    isScrollingRef.current = true;
+    
+    // Use requestAnimationFrame for smooth scrolling
+    requestAnimationFrame(() => {
+      if (source.scrollHeight > source.clientHeight && target.scrollHeight > target.clientHeight) {
+        const scrollPercentage = source.scrollTop / (source.scrollHeight - source.clientHeight);
+        const targetScrollTop = scrollPercentage * (target.scrollHeight - target.clientHeight);
+        target.scrollTop = targetScrollTop;
+      }
+      
+      // Reset scrolling flag after a delay
+      scrollTimeoutRef.current = setTimeout(() => {
+        isScrollingRef.current = false;
+      }, 150);
+    });
+  };
+
   // Reading View Modal Component
   const ReadingViewModal = () => {
     if (!readingView.isOpen) return null;
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-5/6 flex flex-col">
+      <div className={`fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 ${
+        readingView.youtubeOnly ? 'p-0' : 'p-4'
+      }`}>
+        <div className={`bg-white shadow-2xl flex flex-col ${
+          readingView.youtubeOnly 
+            ? 'w-full h-full max-w-none max-h-none m-0 rounded-none' 
+            // : 'w-full max-w-6xl h-5/6 rounded-xl'
+            : 'w-full h-full max-w-none max-h-none m-0 rounded-none' 
+        }`}>
           {/* Modal Header */}
           <div className="flex items-center justify-between p-6 border-b border-gray-200">
             <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
@@ -465,8 +552,37 @@ const LanguageTranslatorApp = () => {
 
           {/* Modal Content */}
           <div className="flex-1 flex overflow-hidden">
-            {/* Original Text Panel */}
-            <div className="flex-1 flex flex-col border-r border-gray-200">
+            {/* YouTube Video Panel (conditional) */}
+            {readingView.youtubeVideoId && (
+              <div className="flex-1 flex flex-col border-r border-gray-200">
+                <div className="p-4 bg-red-50 border-b border-gray-200 flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                    </svg>
+                    <span>Video</span>
+                  </h3>
+                </div>
+                <div className="flex-1 p-4">
+                  <div className="w-full h-full">
+                    <iframe
+                      width="100%"
+                      height="100%"
+                      src={`https://www.youtube.com/embed/${readingView.youtubeVideoId}${readingView.youtubeStartTime ? `?start=${readingView.youtubeStartTime}` : ''}`}
+                      title="YouTube video player"
+                      frameBorder="0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="rounded-lg"
+                    ></iframe>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Original Text Panel - Only show if not YouTube-only mode */}
+            {!readingView.youtubeOnly && (
+              <div className={`${readingView.youtubeVideoId ? 'flex-1' : 'flex-1'} flex flex-col border-r border-gray-200`}>
               <div className="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                 <h3 className="font-semibold text-gray-800 flex items-center gap-2">
                   <span>{readingView.srcLang} - {languageNames[readingView.srcLang] || readingView.srcLang}</span>
@@ -478,16 +594,21 @@ const LanguageTranslatorApp = () => {
                   colorScheme="indigo"
                 />
               </div>
-              <div className="flex-1 p-6 overflow-y-auto">
-                <div className="prose prose-gray max-w-none">
-                  {readingView.originalText.split('\n').map((paragraph, index) => (
-                    <p key={index} className="mb-4 text-lg leading-relaxed text-gray-700">
-                      {paragraph}
-                    </p>
-                  ))}
+                <div 
+                  ref={originalScrollRef}
+                  className="flex-1 p-6 overflow-y-auto"
+                  onScroll={() => handleScroll(originalScrollRef, translatedScrollRef)}
+                >
+                  <div className="prose prose-gray max-w-none">
+                    {readingView.originalText.split('\n').map((paragraph, index) => (
+                      <p key={index} className="mb-4 text-lg leading-relaxed text-gray-700">
+                        {paragraph}
+                      </p>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Translation Panel */}
             <div className="flex-1 flex flex-col">
@@ -495,14 +616,32 @@ const LanguageTranslatorApp = () => {
                 <h3 className="font-semibold text-gray-800 flex items-center gap-2">
                   <span>{readingView.tgtLang} - {languageNames[readingView.tgtLang] || readingView.tgtLang}</span>
                 </h3>
-                <SpeechButton 
-                  text={readingView.translatedText} 
-                  language={readingView.tgtLang} 
-                  size="normal"
-                  colorScheme="blue"
-                />
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(readingView.translatedText);
+                      // You might want to show a toast here
+                    }}
+                    className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                    title="Copy translation"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                  <SpeechButton 
+                    text={readingView.translatedText} 
+                    language={readingView.tgtLang} 
+                    size="normal"
+                    colorScheme="blue"
+                  />
+                </div>
               </div>
-              <div className="flex-1 p-6 overflow-y-auto">
+              <div 
+                ref={translatedScrollRef}
+                className="flex-1 p-6 overflow-y-auto"
+                onScroll={() => handleScroll(translatedScrollRef, originalScrollRef)}
+              >
                 <div className="prose prose-gray max-w-none">
                   {readingView.translatedText.split('\n').map((paragraph, index) => (
                     <p key={index} className="mb-4 text-lg leading-relaxed text-gray-700">
@@ -518,7 +657,12 @@ const LanguageTranslatorApp = () => {
           <div className="p-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <Eye className="w-4 h-4" />
-              <span>Side-by-side reading view</span>
+              <span>
+                {readingView.youtubeVideoId 
+                  ? 'Reading view with video and synchronized scrolling' 
+                  : 'Side-by-side reading view with synchronized scrolling'
+                }
+              </span>
             </div>
             <button
               onClick={closeReadingView}
@@ -626,74 +770,7 @@ const LanguageTranslatorApp = () => {
           )}
         </header>
 
-        {/* Large Text Reader Section */}
-        <div className="mb-6 bg-white rounded-xl shadow-lg p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <Book className="w-5 h-5" />
-            Large Text Reader
-          </h2>
-          <p className="text-gray-600 mb-4">
-            Translate and read large texts in a comfortable side-by-side view
-          </p>
-          
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Source Language:</label>
-                <select
-                  value={srcLang}
-                  onChange={(e) => setSrcLang(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                >
-                  {languages.map(lang => (
-                    <option key={lang} value={lang}>
-                      {lang} - {languageNames[lang] || lang}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Target Language:</label>
-                <select
-                  value={tgtLang}
-                  onChange={(e) => setTgtLang(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                >
-                  {languages.map(lang => (
-                    <option key={lang} value={lang}>
-                      {lang} - {languageNames[lang] || lang}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
 
-            <button
-              onClick={async () => {
-                if (translationText && translation) {
-                  openReadingView(
-                    translationText,
-                    translation,
-                    srcLang,
-                    tgtLang,
-                    'Reading View'
-                  );
-                } else if (translationText) {
-                  // Translate and then open reading view
-                  const translatedText = await handleTranslate();
-                  if (translatedText) {
-                    openReadingView(translationText, translatedText, srcLang, tgtLang, 'Reading View');
-                  }
-                }
-              }}
-              disabled={!translationText.trim()}
-              className="w-full bg-emerald-600 text-white py-4 rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors text-lg font-medium"
-            >
-              <Maximize2 className="w-6 h-6" />
-              {translationText && translation ? 'Open in Reading View' : 'Translate & Open Reading View'}
-            </button>
-          </div>
-        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Translation Section */}
@@ -743,7 +820,7 @@ const LanguageTranslatorApp = () => {
               <div className="relative">
                 <textarea
                   value={translationText}
-                  onChange={(e) => setTranslationText(e.target.value)}
+                  onChange={(e) => handleTranslationTextChange(e.target.value)}
                   placeholder="Enter text to translate..."
                   className="w-full p-3 pr-12 border border-gray-300 rounded-lg h-32 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
                 />
@@ -804,15 +881,34 @@ const LanguageTranslatorApp = () => {
               )}
 
               {translation && (
-                <div className="p-4 bg-gray-50 rounded-lg border relative">
-                  <p className="text-gray-700 pr-12">{translation}</p>
-                  <SpeechButton 
-                    text={translation} 
-                    language={tgtLang} 
-                    size="normal"
-                    className="absolute top-3 right-3 rounded-lg"
-                    colorScheme="indigo"
-                  />
+                <div className="bg-gray-50 rounded-lg border relative">
+                  <div className="flex items-center justify-between p-3 border-b border-gray-200">
+                    <span className="text-sm font-medium text-gray-700">Translation</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(translation);
+                          setMessage('translate', 'Translation copied to clipboard!', 'success');
+                        }}
+                        className="p-1 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                        title="Copy translation"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                      <SpeechButton 
+                        text={translation} 
+                        language={tgtLang} 
+                        size="normal"
+                        className="rounded-lg"
+                        colorScheme="indigo"
+                      />
+                    </div>
+                  </div>
+                  <div className="p-4 h-32 overflow-y-auto">
+                    <p className="text-gray-700 leading-relaxed">{translation}</p>
+                  </div>
                 </div>
               )}
 
@@ -1115,6 +1211,124 @@ const LanguageTranslatorApp = () => {
               )}
 
               <MessageDisplay messageKey="translateSearch" />
+            </div>
+          </div>
+        </div>
+
+        {/* YouTube Video + Translation Section */}
+        <div className="bg-white rounded-xl shadow-lg p-6 mt-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <svg className="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+            </svg>
+            YouTube Video + Translation
+          </h2>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">YouTube Video URL</label>
+                <input
+                  type="text"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  id="youtubeUrl"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Title</label>
+                <input
+                  type="text"
+                  placeholder="Enter a title for this content"
+                  defaultValue="YouTube Video Learning Session"
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  id="videoTitle"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Original Text ({srcLang})</label>
+                <textarea
+                  placeholder="Enter the original text (e.g., video transcript, subtitle, or related content)..."
+                  className="w-full p-3 border border-gray-300 rounded-lg h-32 focus:ring-2 focus:ring-red-500 focus:border-transparent resize-none"
+                  id="videoOriginalText"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Translated Text ({tgtLang})</label>
+                <textarea
+                  placeholder="Enter the translated text or let the system translate..."
+                  className="w-full p-3 border border-gray-300 rounded-lg h-32 focus:ring-2 focus:ring-red-500 focus:border-transparent resize-none"
+                  id="videoTranslatedText"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={async () => {
+                const youtubeUrl = document.getElementById('youtubeUrl').value;
+                const title = document.getElementById('videoTitle').value;
+                const originalText = document.getElementById('videoOriginalText').value;
+                let translatedText = document.getElementById('videoTranslatedText').value;
+                
+                if (!youtubeUrl.trim() || !originalText.trim()) {
+                  alert('Please provide both YouTube URL and original text');
+                  return;
+                }
+                
+                const videoId = extractYouTubeVideoId(youtubeUrl);
+                if (!videoId) {
+                  alert('Please provide a valid YouTube URL');
+                  return;
+                }
+                
+                const startTime = extractYouTubeStartTime(youtubeUrl);
+                
+                // Auto-translate if no translation is provided
+                if (!translatedText.trim() && originalText.trim()) {
+                  try {
+                    const response = await fetch(`${API_BASE}/translate`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        text: originalText,
+                        src_lang: srcLang,
+                        tgt_lang: tgtLang
+                      })
+                    });
+                    const data = await response.json();
+                    if (data.translation) {
+                      translatedText = data.translation;
+                      // Update the textarea with the translation
+                      document.getElementById('videoTranslatedText').value = translatedText;
+                    }
+                  } catch (error) {
+                    console.error('Auto-translation failed:', error);
+                  }
+                }
+                
+                // For YouTube-only mode, we only show video + translation
+                openReadingView(
+                  originalText, // Keep original for reference
+                  translatedText || originalText, // translatedText - this is what we want to show
+                  srcLang,
+                  tgtLang,
+                  title || 'YouTube Video Learning Session',
+                  videoId,
+                  startTime,
+                  true // youtubeOnly = true for full screen experience
+                );
+              }}
+              className="w-full bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2 text-lg font-medium"
+            >
+              <Maximize2 className="w-5 h-5" />
+              Open Video Reading View
+            </button>
+
+            <div className="text-sm text-gray-600">
+              <p>💡 <strong>Tip:</strong> You can include timestamps in YouTube URLs (e.g., ?t=120s) to start the video at a specific time.</p>
             </div>
           </div>
         </div>

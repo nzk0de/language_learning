@@ -38,10 +38,8 @@ async def translate(item: InputText, translator: MYTranslator = Depends(get_tran
     if item.src_lang not in translator.lang_codes or item.tgt_lang not in translator.lang_codes:
         return {"error": f"Invalid lang code. Supported: {sorted(translator.lang_codes)}"}
     
-    # Preprocess the text to clean it before translation
-    cleaned_text = translator.clean_text(item.text)
     # Use the new async translate method
-    translation = await translator.translate(cleaned_text, src=item.src_lang, dest=item.tgt_lang)
+    translation = await translator.translate(item.text, src=item.src_lang, dest=item.tgt_lang)
     return {"translation": translation}
 
 
@@ -151,12 +149,10 @@ def search_with_translations(
 
 
 
-
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React development server
-    allow_credentials=True,
+    allow_origins=["*"],  # Allow all origins for development (includes Chrome extensions)
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
