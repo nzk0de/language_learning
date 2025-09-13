@@ -1,28 +1,46 @@
-import torch
-from transformers import MBart50TokenizerFast, MBartForConditionalGeneration
+from googletrans import Translator as GoogleTranslator, LANGUAGES
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 
 class Translator:
     def __init__(self):
-        model_name = "facebook/mbart-large-50-many-to-many-mmt"
-        self.tokenizer = MBart50TokenizerFast.from_pretrained(model_name)
-        model = MBartForConditionalGeneration.from_pretrained(model_name).to(self._device)
-        self.model = torch.compile(model)
-        print("Translator initialized")
-    @property
-    def _device(self) -> torch.device:
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.translator = GoogleTranslator()
+        self.executor = ThreadPoolExecutor(max_workers=4)
+        print("Google Translator initialized")
 
     @property
     def lang_codes(self) -> set:
-        return set(self.tokenizer.lang_code_to_id.keys())
+        # Get all supported Google Translate language codes
+        return set(LANGUAGES.keys())
+    
+    @property
+    def supported_languages(self) -> dict:
+        # Get all supported languages with their names
+        return LANGUAGES.copy()
 
-    def translate(self, text: str, src_lang: str, tgt_lang: str) -> str:
-        self.tokenizer.src_lang = src_lang
-        inputs = self.tokenizer(text, return_tensors="pt")
-        inputs = {k: v.to(self._device) for k, v in inputs.items()}
-        generated = self.model.generate(
-            **inputs,
-            forced_bos_token_id=self.tokenizer.lang_code_to_id[tgt_lang],
+    def _sync_translate(self, text: str, src: str, dest: str) -> str:
+        """Synchronous translation wrapper for thread execution"""
+        try:
+            result = self.translator.translate(text, src=src, dest=dest)
+            return result.text
+        except Exception as e:
+            print(f"Translation error: {e}")
+            return text  # Return original text if translation fails
+
+    async def translate(self, text: str, src: str, dest: str) -> str:
+        """Async translation method using the format: 
+        result = await translator.translate("Guten Morgen, wie geht es dir?", src="de", dest="en")
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self.executor, 
+            self._sync_translate, 
+            text, 
+            src, 
+            dest
         )
-        return self.tokenizer.batch_decode(generated, skip_special_tokens=True)[0]
+
+    def translate_sync(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        """Synchronous version for backward compatibility"""
+        return self._sync_translate(text, src_lang, tgt_lang)

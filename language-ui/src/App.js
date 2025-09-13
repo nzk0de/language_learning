@@ -1,11 +1,12 @@
-import { ArrowRightLeft, Book, Languages, Loader2, Plus, Search } from 'lucide-react';
+import { ArrowRightLeft, Book, Languages, Loader2, Plus, Search, Volume2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 const LanguageTranslatorApp = () => {
   // State management
   const [languages, setLanguages] = useState([]);
-  const [srcLang, setSrcLang] = useState('en_XX');
-  const [tgtLang, setTgtLang] = useState('de_DE');
+  const [languageNames, setLanguageNames] = useState({});
+  const [srcLang, setSrcLang] = useState('en');
+  const [tgtLang, setTgtLang] = useState('de');
   const [translationText, setTranslationText] = useState('');
   const [translation, setTranslation] = useState('');
   const [insertText, setInsertText] = useState('');
@@ -14,7 +15,7 @@ const LanguageTranslatorApp = () => {
   const [searchLang, setSearchLang] = useState('de');
   const [searchResults, setSearchResults] = useState([]);
   const [translateSearchWord, setTranslateSearchWord] = useState('');
-  const [translateSearchSrc, setTranslateSearchSrc] = useState('en_XX');
+  const [translateSearchSrc, setTranslateSearchSrc] = useState('en');
   const [translateSearchTgt, setTranslateSearchTgt] = useState('de');
   const [translateSearchResults, setTranslateSearchResults] = useState(null);
   
@@ -22,6 +23,7 @@ const LanguageTranslatorApp = () => {
   const [loading, setLoading] = useState({
     languages: false,
     translate: false,
+    translateAndStore: false,
     insert: false,
     search: false,
     translateSearch: false
@@ -30,7 +32,7 @@ const LanguageTranslatorApp = () => {
   // Messages
   const [messages, setMessages] = useState({});
 
-  const API_BASE = 'http://localhost:8001';
+  const API_BASE = 'http://localhost:8000';
 
   // Load languages on component mount
   useEffect(() => {
@@ -53,7 +55,9 @@ const LanguageTranslatorApp = () => {
     try {
       const response = await fetch(`${API_BASE}/languages`);
       const data = await response.json();
-      setLanguages(data.languages || []);
+      // Use language_codes array and store language names object
+      setLanguages(data.language_codes || []);
+      setLanguageNames(data.languages || {});
     } catch (error) {
       setMessage('languages', 'Failed to load languages', 'error');
     } finally {
@@ -88,6 +92,36 @@ const LanguageTranslatorApp = () => {
       setMessage('translate', 'Translation failed', 'error');
     } finally {
       setLoadingState('translate', false);
+    }
+  };
+
+  const handleTranslateAndStore = async () => {
+    if (!translationText.trim()) return;
+    
+    setLoadingState('translateAndStore', true);
+    try {
+      const response = await fetch(`${API_BASE}/translate_and_store`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: translationText,
+          src_lang: srcLang,
+          tgt_lang: tgtLang
+        })
+      });
+      const data = await response.json();
+      
+      if (data.error) {
+        setMessage('translate', data.error, 'error');
+        setTranslation('');
+      } else {
+        setTranslation(data.translation);
+        setMessage('translate', 'Translation and storage successful! Both sentences saved to Elasticsearch.', 'success');
+      }
+    } catch (error) {
+      setMessage('translate', 'Translation and storage failed', 'error');
+    } finally {
+      setLoadingState('translateAndStore', false);
     }
   };
 
@@ -215,7 +249,9 @@ const LanguageTranslatorApp = () => {
                   disabled={loading.languages}
                 >
                   {languages.map(lang => (
-                    <option key={lang} value={lang}>{lang}</option>
+                    <option key={lang} value={lang}>
+                      {lang} - {languageNames[lang] || lang}
+                    </option>
                   ))}
                 </select>
                 
@@ -233,7 +269,9 @@ const LanguageTranslatorApp = () => {
                   disabled={loading.languages}
                 >
                   {languages.map(lang => (
-                    <option key={lang} value={lang}>{lang}</option>
+                    <option key={lang} value={lang}>
+                      {lang} - {languageNames[lang] || lang}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -245,18 +283,33 @@ const LanguageTranslatorApp = () => {
                 className="w-full p-3 border border-gray-300 rounded-lg h-32 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
               />
 
-              <button
-                onClick={handleTranslate}
-                disabled={loading.translate || !translationText.trim()}
-                className="w-full bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
-              >
-                {loading.translate ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <ArrowRightLeft className="w-5 h-5" />
-                )}
-                Translate
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleTranslate}
+                  disabled={loading.translate || !translationText.trim()}
+                  className="bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                >
+                  {loading.translate ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <ArrowRightLeft className="w-5 h-5" />
+                  )}
+                  Translate
+                </button>
+                
+                <button
+                  onClick={handleTranslateAndStore}
+                  disabled={loading.translateAndStore || !translationText.trim()}
+                  className="bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                >
+                  {loading.translateAndStore ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Plus className="w-5 h-5" />
+                  )}
+                  Translate & Store
+                </button>
+              </div>
 
               {translation && (
                 <div className="p-4 bg-gray-50 rounded-lg border">
@@ -283,7 +336,9 @@ const LanguageTranslatorApp = () => {
                 disabled={loading.languages}
               >
                 {languages.map(lang => (
-                  <option key={lang} value={lang.replace('_XX', '').replace('_DE', '')}>{lang}</option>
+                  <option key={lang} value={lang}>
+                    {lang} - {languageNames[lang] || lang}
+                  </option>
                 ))}
               </select>
 
@@ -335,7 +390,9 @@ const LanguageTranslatorApp = () => {
                   disabled={loading.languages}
                 >
                   {languages.map(lang => (
-                    <option key={lang} value={lang.replace('_XX', '').replace('_DE', '')}>{lang}</option>
+                    <option key={lang} value={lang}>
+                      {lang} - {languageNames[lang] || lang}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -395,7 +452,9 @@ const LanguageTranslatorApp = () => {
                     disabled={loading.languages}
                   >
                     {languages.map(lang => (
-                      <option key={lang} value={lang}>{lang}</option>
+                      <option key={lang} value={lang}>
+                        {lang} - {languageNames[lang] || lang}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -408,7 +467,9 @@ const LanguageTranslatorApp = () => {
                     disabled={loading.languages}
                   >
                     {languages.map(lang => (
-                      <option key={lang} value={lang.replace('_XX', '').replace('_DE', '')}>{lang}</option>
+                      <option key={lang} value={lang}>
+                        {lang} - {languageNames[lang] || lang}
+                      </option>
                     ))}
                   </select>
                 </div>

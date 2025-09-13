@@ -10,20 +10,16 @@ authors = [{name="Your Name"}]
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    "googletrans==4.0.0rc1",
     "transformers",
     "torch",
     "spacy",
-    "tiktoken",
-    "protobuf",
-    "sentencepiece",
     # "psycopg2-binary",
     "elasticsearch<9,>=8",
     "wordfreq",
     "langdetect",
     "pytest",
     "httpx",
-    "optimum[onnxruntime]",
-    "onnxruntime",
     "python-dotenv",
 ]
 [project.optional-dependencies]
