@@ -14,11 +14,12 @@ import json
 import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 import argparse
 import sys
 import re
 from datetime import datetime
+import pickle
 
 import mwparserfromhell
 import stanza
@@ -77,16 +78,29 @@ class WikiCorpusProcessor:
         self.language = language
         self.index_name = index_name
         
+        # Cache file for processed articles
+        self.processed_titles_cache_file = Path(f"processed_titles_{self.index_name}.pkl")
+        
         # Initialize components
         self.es = None
         self.nlp = None
         self.quality_checker = SentenceQualityChecker()
+        
+        # Cache sets for efficient lookups
+        self.processed_titles_cache = {
+            'indexed': set(),      # Articles that were successfully indexed
+            'rejected': set(),     # Articles that failed quality check
+            'similar': set(),      # Articles that were skipped due to similarity
+            'errors': set()        # Articles that had processing errors
+        }
         
         # Statistics
         self.stats = {
             'articles_processed': 0,
             'articles_indexed': 0,
             'articles_skipped': 0,
+            'articles_rejected': 0,
+            'cache_hits': 0,
             'errors': 0,
             'start_time': None,
             'end_time': None
@@ -282,6 +296,85 @@ class WikiCorpusProcessor:
             logger.error(f"Error retrieving all titles from Elasticsearch: {e}")
             return set()
     
+    def load_processed_titles_cache(self) -> bool:
+        """
+        Load processed titles cache from disk.
+        
+        Returns:
+            bool: True if cache was loaded successfully, False otherwise
+        """
+        try:
+            if self.processed_titles_cache_file.exists():
+                with open(self.processed_titles_cache_file, 'rb') as f:
+                    self.processed_titles_cache = pickle.load(f)
+                
+                total_cached = sum(len(titles) for titles in self.processed_titles_cache.values())
+                logger.info(f"Loaded processed titles cache with {total_cached} articles:")
+                for category, titles in self.processed_titles_cache.items():
+                    logger.info(f"  {category}: {len(titles)} articles")
+                return True
+            else:
+                logger.info("No processed titles cache file found - starting fresh")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"Error loading processed titles cache: {e}")
+            logger.info("Starting with empty cache")
+            self.processed_titles_cache = {
+                'indexed': set(),
+                'rejected': set(),
+                'similar': set(),
+                'errors': set()
+            }
+            return False
+    
+    def save_processed_titles_cache(self) -> bool:
+        """
+        Save processed titles cache to disk.
+        
+        Returns:
+            bool: True if saved successfully, False otherwise
+        """
+        try:
+            with open(self.processed_titles_cache_file, 'wb') as f:
+                pickle.dump(self.processed_titles_cache, f)
+            
+            total_cached = sum(len(titles) for titles in self.processed_titles_cache.values())
+            logger.info(f"Saved processed titles cache with {total_cached} articles")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving processed titles cache: {e}")
+            return False
+    
+    def is_title_already_processed(self, title: str) -> Tuple[bool, str]:
+        """
+        Check if a title has already been processed (in any category).
+        
+        Args:
+            title: Title to check
+            
+        Returns:
+            Tuple[bool, str]: (is_processed, category)
+        """
+        for category, titles in self.processed_titles_cache.items():
+            if title in titles:
+                return True, category
+        return False, ""
+    
+    def add_title_to_cache(self, title: str, category: str):
+        """
+        Add a title to the processed cache in the specified category.
+        
+        Args:
+            title: Title to add
+            category: Category ('indexed', 'rejected', 'similar', 'errors')
+        """
+        if category in self.processed_titles_cache:
+            self.processed_titles_cache[category].add(title)
+        else:
+            logger.warning(f"Unknown cache category: {category}")
+
     def check_similar_title_exists(self, title: str, existing_titles: set, similarity_threshold: float = 0.8) -> bool:
         """
         Check if a similar title already exists using local set comparison (much faster).
@@ -363,7 +456,7 @@ class WikiCorpusProcessor:
                 "word_count": 0
             }
     
-    def index_article(self, title: str, nlp_data: Dict) -> bool:
+    def index_article(self, title: str, nlp_data: Dict) -> Tuple[bool, str]:
         """
         Index article sentences in Elasticsearch with quality filtering.
         
@@ -372,7 +465,7 @@ class WikiCorpusProcessor:
             nlp_data: NLP processing results with doc_dict
             
         Returns:
-            bool: True if successful, False otherwise
+            Tuple[bool, str]: (success, reason) - reason explains the outcome
         """
         try:
             # Prepare documents for bulk indexing with quality filtering
@@ -408,14 +501,14 @@ class WikiCorpusProcessor:
             if documents:
                 response = helpers.bulk(self.es, documents)
                 logger.debug(f"Indexed {len(documents)} quality sentences from '{title}' (filtered out {filtered_count})")
-                return True
+                return True, "indexed"
             else:
                 logger.warning(f"No quality sentences to index for '{title}' (filtered out {filtered_count})")
-                return False
+                return False, "rejected"
             
         except Exception as e:
             logger.error(f"Error indexing article '{title}': {e}")
-            return False
+            return False, "error"
     
     def process_dump(self, max_articles: int = 100, similarity_threshold: float = 0.8) -> Dict:
         """
@@ -437,6 +530,10 @@ class WikiCorpusProcessor:
         
         self.stats['start_time'] = datetime.now()
         
+        # Load processed titles cache
+        logger.info("Loading processed titles cache...")
+        self.load_processed_titles_cache()
+        
         # Fetch all existing titles from Elasticsearch at once for efficient similarity checking
         logger.info("Fetching existing titles from Elasticsearch for similarity checking...")
         existing_titles = self.get_all_existing_titles()
@@ -445,6 +542,8 @@ class WikiCorpusProcessor:
         # Initialize progress bar without total - we don't know how many we'll need to process
         pbar = tqdm(desc=f"Indexing articles (target: {max_articles})", unit="articles")
         page_data = {}
+        save_cache_counter = 0  # Save cache periodically
+        in_page = False  # Initialize page tracking variable
         try:
             with bz2.open("/home/ubuntu/Downloads/dewiki-20250901-pages-articles-multistream1.xml-p1p297012.bz2") as f:
                 for event, elem in ET.iterparse(f, events=("start", "end")):
@@ -463,47 +562,73 @@ class WikiCorpusProcessor:
                                 wikicode = mwparserfromhell.parse(elem.text)
                                 current_text = wikicode.strip_code()
                         elif elem.tag.endswith("page") and in_page:
-                            # End of page - process if not similar to existing articles
+                            # End of page - process if not already processed or similar
                             if current_title and current_text:
-                                # First check: Local similarity with current batch (rapidfuzz)
-                                is_similar_local, similar_local_title = check_similar(current_title, page_data.keys(), threshold=int(similarity_threshold * 100))
-                                
-                                # Second check: Similarity with existing corpus (local set - much faster!)
-                                is_similar_existing = self.check_similar_title_exists(current_title, existing_titles, similarity_threshold)
-                                
-                                if is_similar_local:
-                                    logger.debug(f"Skipping locally similar title: {current_title} (similar to {similar_local_title})")
-                                    self.stats['articles_skipped'] += 1
-                                elif is_similar_existing:
-                                    logger.debug(f"Skipping existing similar title: {current_title}")
+                                # First check: Is this title already processed?
+                                is_processed, cache_category = self.is_title_already_processed(current_title)
+                                if is_processed:
+                                    logger.debug(f"Skipping already processed title: {current_title} (cached as {cache_category})")
+                                    self.stats['cache_hits'] += 1
                                     self.stats['articles_skipped'] += 1
                                 else:
-                                    # Process the article (not similar and not duplicate)
-                                    page_data[current_title] = current_text
+                                    # Second check: Local similarity with current batch (rapidfuzz)
+                                    is_similar_local, similar_local_title = check_similar(current_title, page_data.keys(), threshold=int(similarity_threshold * 100))
                                     
+                                    # Third check: Similarity with existing corpus (local set - much faster!)
+                                    is_similar_existing = self.check_similar_title_exists(current_title, existing_titles, similarity_threshold)
                                     
-                                    # Update progress bar description with current article
-                                    pbar.set_description(f"Processing: {current_title[:30]}...")
-                                    
-                                    # Process with Stanza
-                                    nlp_data = self.process_with_stanza(current_text)
-                                    
-                                    # Index in Elasticsearch
-                                    if self.index_article(current_title, nlp_data):
-                                        self.stats['articles_indexed'] += 1
-                                        # Update progress bar ONLY when we successfully index
-                                        pbar.update(1)
-                                        pbar.set_description(f"Indexed {self.stats['articles_indexed']}/{max_articles}: {current_title[:30]}...")
-                                        logger.info(f"Successfully indexed article {self.stats['articles_indexed']}/{max_articles}: {current_title}")
+                                    if is_similar_local:
+                                        logger.debug(f"Skipping locally similar title: {current_title} (similar to {similar_local_title})")
+                                        self.add_title_to_cache(current_title, "similar")
+                                        self.stats['articles_skipped'] += 1
+                                    elif is_similar_existing:
+                                        logger.debug(f"Skipping existing similar title: {current_title}")
+                                        self.add_title_to_cache(current_title, "similar")
+                                        self.stats['articles_skipped'] += 1
                                     else:
-                                        self.stats['errors'] += 1
+                                        # Process the article (not similar and not duplicate)
+                                        page_data[current_title] = current_text
                                         self.stats['articles_processed'] += 1
-                                    # Update progress bar postfix with processing stats
-                                    pbar.set_postfix({
-                                        'processed': self.stats['articles_processed'],
-                                        'errors': self.stats['errors'],
-                                        'skipped': self.stats['articles_skipped']
-                                    })
+                                        
+                                        # Update progress bar description with current article
+                                        pbar.set_description(f"Processing: {current_title[:30]}...")
+                                        
+                                        # Process with Stanza
+                                        nlp_data = self.process_with_stanza(current_text)
+                                        
+                                        # Index in Elasticsearch
+                                        success, reason = self.index_article(current_title, nlp_data)
+                                        
+                                        # Add to appropriate cache category
+                                        if success and reason == "indexed":
+                                            self.add_title_to_cache(current_title, "indexed")
+                                            self.stats['articles_indexed'] += 1
+                                            # Update progress bar ONLY when we successfully index
+                                            pbar.update(1)
+                                            pbar.set_description(f"Indexed {self.stats['articles_indexed']}/{max_articles}: {current_title[:30]}...")
+                                            logger.info(f"Successfully indexed article {self.stats['articles_indexed']}/{max_articles}: {current_title}")
+                                        elif reason == "rejected":
+                                            self.add_title_to_cache(current_title, "rejected")
+                                            self.stats['articles_rejected'] += 1
+                                        elif reason == "error":
+                                            self.add_title_to_cache(current_title, "errors")
+                                            self.stats['errors'] += 1
+                                        
+                                        # Update progress bar postfix with processing stats
+                                        pbar.set_postfix({
+                                            'processed': self.stats['articles_processed'],
+                                            'indexed': self.stats['articles_indexed'],
+                                            'rejected': self.stats['articles_rejected'],
+                                            'cache_hits': self.stats['cache_hits'],
+                                            'errors': self.stats['errors'],
+                                            'skipped': self.stats['articles_skipped']
+                                        })
+                                        
+                                        # Periodically save cache (every 50 processed articles)
+                                        save_cache_counter += 1
+                                        if save_cache_counter >= 50:
+                                            self.save_processed_titles_cache()
+                                            save_cache_counter = 0
                                 
                                 # Clean up XML elements to save memory
                             elem.clear()
@@ -520,6 +645,8 @@ class WikiCorpusProcessor:
         
         finally:
             pbar.close()
+            # Save the final cache
+            self.save_processed_titles_cache()
             self.stats['end_time'] = datetime.now()
             self._log_final_stats()
         
@@ -529,16 +656,26 @@ class WikiCorpusProcessor:
         """Log final processing statistics."""
         duration = self.stats['end_time'] - self.stats['start_time']
         
-        logger.info("="*50)
+        logger.info("="*60)
         logger.info("PROCESSING COMPLETE")
-        logger.info("="*50)
-        logger.info(f"Articles processed: {self.stats['articles_processed']}")
+        logger.info("="*60)
+        logger.info(f"Articles processed (new): {self.stats['articles_processed']}")
         logger.info(f"Articles indexed: {self.stats['articles_indexed']}")
+        logger.info(f"Articles rejected (quality): {self.stats['articles_rejected']}")
         logger.info(f"Articles skipped (similar): {self.stats['articles_skipped']}")
+        logger.info(f"Cache hits (previously processed): {self.stats['cache_hits']}")
         logger.info(f"Errors: {self.stats['errors']}")
         logger.info(f"Duration: {duration}")
         logger.info(f"Index name: {self.index_name}")
-        logger.info("="*50)
+        logger.info(f"Cache file: {self.processed_titles_cache_file}")
+        
+        # Cache statistics
+        total_cached = sum(len(titles) for titles in self.processed_titles_cache.values())
+        logger.info(f"Total articles in cache: {total_cached}")
+        for category, titles in self.processed_titles_cache.items():
+            logger.info(f"  {category}: {len(titles)}")
+        
+        logger.info("="*60)
 
 
 def main():
@@ -548,8 +685,9 @@ def main():
     parser.add_argument("--max-articles", type=int, default=100, help="Exact number of articles to INDEX (will process as many as needed, default: 100)")
     parser.add_argument("--language", default="de", help="Language code for Stanza (default: de)")
     parser.add_argument("--elasticsearch-host", default="http://localhost:9200", help="Elasticsearch host")
-    parser.add_argument("--index-name", default="wiki_docs", help="Elasticsearch index name")
+    parser.add_argument("--index-name", default="wiki_docs_de", help="Elasticsearch index name")
     parser.add_argument("--force-recreate", action="store_true", help="Force recreation of corpus even if it exists")
+    parser.add_argument("--clear-cache", action="store_true", help="Clear processed articles cache and start fresh")
     parser.add_argument("--similarity-threshold", type=float, default=0.8, help="Similarity threshold for duplicate detection (0.0-1.0, default: 0.8)")
     
     args = parser.parse_args()
@@ -561,6 +699,14 @@ def main():
         language=args.language,
         index_name=args.index_name
     )
+    
+    # Clear cache if requested
+    if args.clear_cache:
+        if processor.processed_titles_cache_file.exists():
+            processor.processed_titles_cache_file.unlink()
+            logger.info("Cleared processed titles cache")
+        else:
+            logger.info("No cache file found to clear")
     
     # Initialize Elasticsearch first to check if corpus exists
     if not processor.initialize_elasticsearch(force_recreate=args.force_recreate):
