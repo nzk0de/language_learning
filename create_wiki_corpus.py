@@ -24,7 +24,12 @@ import stanza
 from elasticsearch import Elasticsearch, helpers
 from elasticsearch.exceptions import ConnectionError, RequestError
 from tqdm import tqdm
-
+from rapidfuzz import fuzz
+def check_similar(title, existing_titles, threshold=90):
+    for t in existing_titles:
+        if fuzz.ratio(title, t) >= threshold:
+            return True, t
+    return False, None
 
 # Configure logging
 logging.basicConfig(
@@ -265,43 +270,58 @@ class WikiCorpusProcessor:
         
         # Initialize progress bar
         pbar = tqdm(total=max_articles, desc="Processing articles", unit="articles")
-        
+        page_data = {}
         try:
-            with bz2.open(self.dump_file_path, 'rt', encoding='utf-8') as f:
+            with bz2.open("/home/ubuntu/Downloads/dewiki-20250901-pages-articles-multistream1.xml-p1p297012.bz2") as f:
+                for event, elem in tqdm(ET.iterparse(f, events=("start", "end"))):
+                    if event == "start":
+                        if elem.tag.endswith("page"):
+                            in_page = True
+                            current_title = None
+                            current_text = None
+                    elif event == "end":
+                        if elem.tag.endswith("title") and in_page:
+                            current_title = elem.text
+                            # if current_title:
+                            #     print(f"Title: {current_title}")
+                        elif elem.tag.endswith("text") and in_page:
+                            if elem.text:
+                                wikicode = mwparserfromhell.parse(elem.text)
+                                current_text = wikicode.strip_code()
+                        elif elem.tag.endswith("page") and in_page:
+                            # End of page - store the title-text pair
+                            is_similar, similar_title = check_similar(current_title, page_data.keys())
 
-                
-                for _, elem in ET.iterparse(f, events=("end",)):
-                    if elem.tag.endswith("title"):
-                        title = elem.text
-                    if elem.tag.endswith("text"):
-                        
-                        # Extract article data
-                        wikicode = mwparserfromhell.parse(elem.text)
-                        content = wikicode.strip_code()
-                        # Update progress bar description with current article
-                        pbar.set_description(f"Processing: {title[:30]}...")
-                        
-                        # Process with Stanza
-                        nlp_data = self.process_with_stanza(content)
-                        
-                        # Index in Elasticsearch
-                        if self.index_article(title, nlp_data):
-                            self.stats['articles_indexed'] += 1
-                        else:
-                            self.stats['errors'] += 1
-                        
-                        self.stats['articles_processed'] += 1
-                        
-                        # Update progress bar
-                        pbar.update(1)
-                        pbar.set_postfix({
-                            'indexed': self.stats['articles_indexed'],
-                            'errors': self.stats['errors']
-                        })
-                        
-                        # Clean up XML elements to save memory
-                        elem.clear()
-                        
+                            if is_similar:
+                                print(f"Skipping similar title: {current_title} (similar to {similar_title})")
+                            
+                            elif current_title and current_text and current_title not in page_data:
+                                page_data[current_title] = current_text
+                                logger.info(f"Collected {len(page_data)} titles so far")
+                                # Update progress bar description with current article
+                                pbar.set_description(f"Processing: {current_title[:30]}...")
+                                
+                                # Process with Stanza
+                                nlp_data = self.process_with_stanza(current_text)
+                                
+                                # Index in Elasticsearch
+                                if self.index_article(current_title, nlp_data):
+                                    self.stats['articles_indexed'] += 1
+                                else:
+                                    self.stats['errors'] += 1
+                                
+                                self.stats['articles_processed'] += 1
+                                
+                                # Update progress bar
+                                pbar.update(1)
+                                pbar.set_postfix({
+                                    'indexed': self.stats['articles_indexed'],
+                                    'errors': self.stats['errors']
+                                })
+                                
+                                # Clean up XML elements to save memory
+                            elem.clear()
+                                
                         # Check if we've reached the target
                         if self.stats['articles_processed'] >= max_articles:
                             logger.info(f"Reached target of {max_articles} articles")
