@@ -11,13 +11,21 @@ const LanguageTranslatorApp = () => {
   const [translation, setTranslation] = useState('');
   const [insertText, setInsertText] = useState('');
   const [insertLang, setInsertLang] = useState('de');
-  const [searchWord, setSearchWord] = useState('');
-  const [searchLang, setSearchLang] = useState('de');
-  const [searchResults, setSearchResults] = useState([]);
   const [translateSearchWord, setTranslateSearchWord] = useState('');
   const [translateSearchSrc, setTranslateSearchSrc] = useState('en');
   const [translateSearchTgt, setTranslateSearchTgt] = useState('de');
   const [translateSearchResults, setTranslateSearchResults] = useState(null);
+  
+  // Learning language - the language of your corpus that you're learning from
+  const [learningLanguage, setLearningLanguage] = useState('de');
+  
+  // Word frequency state
+  const [posTags, setPosTags] = useState([]);
+  const [selectedPosTag, setSelectedPosTag] = useState('NOUN');
+  const [frequencyLang, setFrequencyLang] = useState('de');
+  const [startRank, setStartRank] = useState(1);
+  const [endRank, setEndRank] = useState(20);
+  const [wordFrequencyResults, setWordFrequencyResults] = useState(null);
   
   // Loading states
   const [loading, setLoading] = useState({
@@ -25,8 +33,9 @@ const LanguageTranslatorApp = () => {
     translate: false,
     translateAndStore: false,
     insert: false,
-    search: false,
-    translateSearch: false
+    translateSearch: false,
+    wordFrequency: false,
+    posTags: false
   });
 
   // Messages
@@ -51,6 +60,14 @@ const LanguageTranslatorApp = () => {
     youtubeVideoId: null,
     youtubeStartTime: null,
     youtubeOnly: false
+  });
+
+  // Word examples modal state
+  const [wordExamplesModal, setWordExamplesModal] = useState({
+    isOpen: false,
+    word: '',
+    examples: [],
+    loading: false
   });
 
   // Refs and state for synchronized scrolling in reading view
@@ -223,6 +240,7 @@ const LanguageTranslatorApp = () => {
   // Load languages on component mount and speech voices
   useEffect(() => {
     fetchLanguages();
+    fetchPosTags();
     
     // Load speech synthesis voices
     const loadVoices = () => {
@@ -252,6 +270,7 @@ const LanguageTranslatorApp = () => {
       const response = await fetch(`${API_BASE}/languages`);
       const data = await response.json();
       // Use language_codes array and store language names object
+
       setLanguages(data.language_codes || []);
       setLanguageNames(data.languages || {});
     } catch (error) {
@@ -366,52 +385,160 @@ const LanguageTranslatorApp = () => {
     }
   };
 
-  const handleSearch = async () => {
-    if (!searchWord.trim()) return;
-    
-    setLoadingState('search', true);
-    try {
-      const response = await fetch(
-        `${API_BASE}/search?word=${encodeURIComponent(searchWord)}&lang=${searchLang}&limit=5`
-      );
-      const data = await response.json();
-      
-      if (data.error) {
-        setMessage('search', data.error, 'error');
-        setSearchResults([]);
-      } else {
-        setSearchResults(data.examples || []);
-        setMessage('search', `Found ${data.examples?.length || 0} examples`, 'success');
-      }
-    } catch (error) {
-      setMessage('search', 'Search failed', 'error');
-    } finally {
-      setLoadingState('search', false);
-    }
-  };
+
 
   const handleTranslateSearch = async () => {
     if (!translateSearchWord.trim()) return;
     
+    // Open modal with loading state
+    setWordExamplesModal({
+      isOpen: true,
+      word: translateSearchWord,
+      examples: [],
+      loading: true
+    });
+    
     setLoadingState('translateSearch', true);
     try {
+      // New simplified logic: 
+      // - Use translateSearchSrc as the input language
+      // - Use translateSearchTgt as the translation target  
+      // - Always search corpus in learningLanguage
       const response = await fetch(
-        `${API_BASE}/translate_search?word=${encodeURIComponent(translateSearchWord)}&src_lang=${translateSearchSrc}&tgt_lang=${translateSearchTgt}&limit=5`
+        `${API_BASE}/translate_search?word=${encodeURIComponent(translateSearchWord)}&src_lang=${translateSearchSrc}&tgt_lang=${translateSearchTgt}&corpus_lang=${learningLanguage}&limit=10`
       );
       const data = await response.json();
       
       if (data.error) {
         setMessage('translateSearch', data.error, 'error');
-        setTranslateSearchResults(null);
+        setWordExamplesModal(prev => ({
+          ...prev,
+          loading: false
+        }));
       } else {
-        setTranslateSearchResults(data);
-        setMessage('translateSearch', 'Translation and examples found!', 'success');
+        console.log('Translate search response:', data); // Debug log
+        // Open the modal with examples instead of setting inline results
+        setWordExamplesModal(prev => ({
+          ...prev,
+          examples: data.examples || [],
+          loading: false
+        }));
+        const sourceWord = data.source_word || translateSearchWord;
+        const translatedWord = data.translated_word || 'translation';
+        setMessage('translateSearch', `Found ${data.examples?.length || 0} examples for "${sourceWord}" → "${translatedWord}"`, 'success');
       }
     } catch (error) {
       setMessage('translateSearch', 'Translate search failed', 'error');
+      setWordExamplesModal(prev => ({
+        ...prev,
+        loading: false
+      }));
     } finally {
       setLoadingState('translateSearch', false);
     }
+  };
+
+  const fetchPosTags = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/pos_tags`);
+      const data = await response.json();
+      if (data.error) {
+        setMessage('wordFrequency', data.error, 'error');
+      } else {
+        setPosTags(data.pos_tags || []);
+      }
+    } catch (error) {
+      setMessage('wordFrequency', 'Failed to load POS tags', 'error');
+    }
+  };
+
+  const handleWordFrequency = async () => {
+    if (!selectedPosTag) return;
+    
+    // Validate and convert ranks
+    const startRankNum = Math.max(1, parseInt(startRank) || 1);
+    const endRankNum = Math.max(startRankNum, parseInt(endRank) || startRankNum + 49);
+    
+    setLoadingState('wordFrequency', true);
+    try {
+      const params = new URLSearchParams({
+        start_rank: startRankNum.toString(),
+        end_rank: endRankNum.toString()
+      });
+      
+      const response = await fetch(
+        `${API_BASE}/word_frequency/${encodeURIComponent(selectedPosTag)}?${params}`
+      );
+      const data = await response.json();
+      
+      if (data.error) {
+        setMessage('wordFrequency', data.error, 'error');
+        setWordFrequencyResults(null);
+      } else {
+        // Transform the API response to match frontend expectations
+        const transformedData = {
+          ...data,
+          words: data.results?.map(item => ({
+            rank: item.rank,
+            word: item.word,
+            count: item.count,
+            percentage: ((item.count / data.total_unique_words) * 100).toFixed(2)
+          })) || []
+        };
+        setWordFrequencyResults(transformedData);
+        setMessage('wordFrequency', `Found ${data.results?.length || 0} words for ${selectedPosTag}`, 'success');
+      }
+    } catch (error) {
+      setMessage('wordFrequency', 'Word frequency analysis failed', 'error');
+    } finally {
+      setLoadingState('wordFrequency', false);
+    }
+  };
+
+  const fetchWordExamples = async (word) => {
+    setWordExamplesModal({
+      isOpen: true,
+      word: word,
+      examples: [],
+      loading: true
+    });
+
+    try {
+      // Use learningLanguage as source (corpus language) and English as target for translation
+      const response = await fetch(
+        `${API_BASE}/translate_search?word=${encodeURIComponent(word)}&src_lang=${learningLanguage}&tgt_lang=en&corpus_lang=${learningLanguage}&limit=10`
+      );
+      const data = await response.json();
+      
+      if (data.error) {
+        setWordExamplesModal(prev => ({
+          ...prev,
+          loading: false
+        }));
+        setMessage('wordExamples', data.error, 'error');
+      } else {
+        setWordExamplesModal(prev => ({
+          ...prev,
+          examples: data.examples || [],
+          loading: false
+        }));
+      }
+    } catch (error) {
+      setWordExamplesModal(prev => ({
+        ...prev,
+        loading: false
+      }));
+      setMessage('wordExamples', 'Failed to fetch word examples', 'error');
+    }
+  };
+
+  const closeWordExamplesModal = () => {
+    setWordExamplesModal({
+      isOpen: false,
+      word: '',
+      examples: [],
+      loading: false
+    });
   };
 
   const swapLanguages = () => {
@@ -734,6 +861,279 @@ const LanguageTranslatorApp = () => {
     );
   };
 
+  // Word Examples Modal Component
+  const WordExamplesModal = () => {
+    // Handle escape key - must be called unconditionally
+    useEffect(() => {
+      const handleEscape = (e) => {
+        if (e.key === 'Escape' && wordExamplesModal.isOpen) {
+          closeWordExamplesModal();
+        }
+      };
+
+      document.addEventListener('keydown', handleEscape);
+      return () => document.removeEventListener('keydown', handleEscape);
+    }, [wordExamplesModal.isOpen]);
+
+    if (!wordExamplesModal.isOpen) return null;
+
+    return (
+      <div 
+        className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            closeWordExamplesModal();
+          }
+        }}
+      >
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
+          {/* Modal Header */}
+          <div className="flex items-center justify-between p-6 border-b border-gray-200">
+            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              Examples for "{wordExamplesModal.word}"
+            </h2>
+            <button
+              onClick={closeWordExamplesModal}
+              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          {/* Modal Content */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {wordExamplesModal.loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+                <span className="ml-2 text-gray-600">Loading examples...</span>
+              </div>
+            ) : wordExamplesModal.examples.length > 0 ? (
+              <div className="space-y-4">
+                {wordExamplesModal.examples.map((example, index) => {
+                  const sentence = example.sentence;
+                  const title = example.title;
+                  const highlighted = example.highlighted;
+                  const translation = example.translation;
+                  const translationLang = example.translation_lang;
+                  const exampleLang = example.lang || learningLanguage;
+                  
+                  return (
+                    <div key={index} className="bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                      {title && (
+                        <div className="px-4 pt-3 pb-1">
+                          <div className="text-xs text-gray-500 font-medium">
+                            From: {title}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Side-by-side content */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 border-b border-gray-100">
+                        {/* Original text side */}
+                        <div className="p-4 border-r border-gray-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                              Original ({exampleLang})
+                            </span>
+                            <SpeechButton 
+                              text={sentence} 
+                              language={exampleLang} 
+                              size="small"
+                              className="rounded"
+                              colorScheme="indigo"
+                            />
+                          </div>
+                          <div 
+                            className={`text-gray-700 leading-relaxed ${!translation ? 'cursor-pointer hover:bg-blue-50 rounded p-2 -m-2 transition-colors' : ''}`}
+                            onClick={!translation ? async () => {
+                              // Update the specific example with loading state
+                              const updatedExamples = [...wordExamplesModal.examples];
+                              updatedExamples[index] = { ...example, translating: true };
+                              setWordExamplesModal(prev => ({
+                                ...prev,
+                                examples: updatedExamples
+                              }));
+                              
+                              try {
+                                const response = await fetch(`${API_BASE}/translate`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                  },
+                                  body: JSON.stringify({
+                                    text: sentence,
+                                    src_lang: exampleLang,
+                                    tgt_lang: 'en'
+                                  }),
+                                });
+                                const translateData = await response.json();
+                                
+                                if (translateData.translation) {
+                                  // Update the specific example with translation
+                                  const finalExamples = [...wordExamplesModal.examples];
+                                  finalExamples[index] = { 
+                                    ...example, 
+                                    translation: translateData.translation,
+                                    translation_lang: translateData.target_lang,
+                                    translating: false
+                                  };
+                                  setWordExamplesModal(prev => ({
+                                    ...prev,
+                                    examples: finalExamples
+                                  }));
+                                }
+                              } catch (error) {
+                                console.error('Translation failed:', error);
+                                // Remove loading state on error
+                                const errorExamples = [...wordExamplesModal.examples];
+                                errorExamples[index] = { ...example, translating: false };
+                                setWordExamplesModal(prev => ({
+                                  ...prev,
+                                  examples: errorExamples
+                                }));
+                              }
+                            } : undefined}
+                            title={!translation ? "Click to translate this sentence" : ""}
+                          >
+                            {highlighted ? (
+                              <div dangerouslySetInnerHTML={{__html: highlighted}} />
+                            ) : (
+                              <p>{sentence}</p>
+                            )}
+                            {!translation && (
+                              <div className="text-xs text-blue-500 mt-1 opacity-75">
+                                Click to translate →
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Translation side */}
+                        <div className="p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                              Translation ({translationLang || 'en'})
+                            </span>
+                            {translation && (
+                              <SpeechButton 
+                                text={translation} 
+                                language={translationLang || 'en'} 
+                                size="small"
+                                className="rounded"
+                                colorScheme="green"
+                              />
+                            )}
+                          </div>
+                          <div className="text-gray-700 leading-relaxed">
+                            {example.translating ? (
+                              <div className="flex items-center gap-2 text-blue-600">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span className="italic">Translating...</span>
+                              </div>
+                            ) : translation ? (
+                              <p>{translation}</p>
+                            ) : (
+                              <p className="text-gray-400 italic">No translation available</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Action buttons */}
+                      <div className="px-4 py-3 bg-gray-50 flex items-center justify-between">
+                        <div className="text-xs text-gray-500">
+                          Click to open in full reading view
+                        </div>
+                        <button
+                          onClick={async () => {
+                            let readingOriginal = sentence;
+                            let readingTranslation = translation;
+                            let readingSrcLang = exampleLang;
+                            let readingTgtLang = translationLang || 'en';
+                            
+                            // If no translation exists, translate the full sentence
+                            if (!readingTranslation) {
+                              try {
+                                const response = await fetch(`${API_BASE}/translate`, {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                  },
+                                  body: JSON.stringify({
+                                    text: sentence,
+                                    src_lang: exampleLang,
+                                    tgt_lang: 'en'
+                                  }),
+                                });
+                                const translateData = await response.json();
+                                if (translateData.translation) {
+                                  readingTranslation = translateData.translation;
+                                  readingTgtLang = translateData.target_lang;
+                                }
+                              } catch (error) {
+                                console.error('Translation failed:', error);
+                              }
+                            }
+                            
+                            // Close the examples modal first
+                            closeWordExamplesModal();
+                            
+                            // Open reading view
+                            openReadingView(
+                              readingOriginal,
+                              readingTranslation,
+                              readingSrcLang,
+                              readingTgtLang,
+                              title ? `Example from: ${title}` : `Example for "${wordExamplesModal.word}"`
+                            );
+                          }}
+                          className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="Open in Reading View"
+                        >
+                          <Maximize2 className="w-4 h-4" />
+                          Full View
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <div className="text-gray-400 mb-2">
+                  <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.172 16.172a4 4 0 015.656 0M9 12h6m-6-4h6m2 5.291A7.962 7.962 0 0112 15c-2.34 0-4.29-1.007-5.824-2.709M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                </div>
+                <p className="text-gray-600">No examples found for "{wordExamplesModal.word}"</p>
+              </div>
+            )}
+          </div>
+
+          {/* Modal Footer */}
+          <div className="p-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>Click on any example to open it in reading view</span>
+            </div>
+            <button
+              onClick={closeWordExamplesModal}
+              className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-6xl mx-auto">
@@ -972,27 +1372,27 @@ const LanguageTranslatorApp = () => {
             </div>
           </div>
 
-          {/* Search Examples Section */}
+          {/* Unified Search & Translate Section */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
               <Search className="w-5 h-5" />
-              Search Examples
+              Word Search & Translation
             </h2>
             
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <p className="text-sm text-blue-700">
+                💡 <strong>Smart Search:</strong> Enter any word, get translation, and find examples from your {learningLanguage.toUpperCase()} corpus!
+              </p>
+            </div>
+            
             <div className="space-y-4">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={searchWord}
-                  onChange={(e) => setSearchWord(e.target.value)}
-                  placeholder="Enter word to search..."
-                  className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                />
+              {/* Learning Language Selector */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Learning Language (Corpus):</label>
                 <select
-                  value={searchLang}
-                  onChange={(e) => setSearchLang(e.target.value)}
-                  className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  value={learningLanguage}
+                  onChange={(e) => setLearningLanguage(e.target.value)}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-purple-50"
                   disabled={loading.languages}
                 >
                   {languages.map(lang => (
@@ -1001,96 +1401,20 @@ const LanguageTranslatorApp = () => {
                     </option>
                   ))}
                 </select>
+                <p className="text-xs text-gray-600 mt-1">This is the language of your corpus that you're learning from</p>
               </div>
-
-              <button
-                onClick={handleSearch}
-                disabled={loading.search || !searchWord.trim()}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
-              >
-                {loading.search ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Search className="w-5 h-5" />
-                )}
-                Search Examples
-              </button>
-
-              {searchResults.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="font-medium text-gray-700">Examples:</h3>
-                  {searchResults.map((example, index) => (
-                    <div key={index} className="p-3 bg-gray-50 rounded-lg border relative">
-                      <p className="text-gray-700 pr-24">{example}</p>
-                      <div className="absolute top-3 right-3 flex gap-1">
-                        <button
-                          onClick={async () => {
-                            // Translate the example and open in reading view
-                            try {
-                              const response = await fetch(`${API_BASE}/translate`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  text: example,
-                                  src_lang: searchLang,
-                                  tgt_lang: searchLang === 'en' ? 'de' : 'en'
-                                })
-                              });
-                              const data = await response.json();
-                              if (data.translation) {
-                                openReadingView(
-                                  example,
-                                  data.translation,
-                                  searchLang,
-                                  searchLang === 'en' ? 'de' : 'en',
-                                  'Example Reading View'
-                                );
-                              }
-                            } catch (error) {
-                              console.error('Translation failed:', error);
-                            }
-                          }}
-                          className="p-1 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
-                          title="Open in Reading View"
-                        >
-                          <Maximize2 className="w-4 h-4" />
-                        </button>
-                        <SpeechButton 
-                          text={example} 
-                          language={searchLang} 
-                          size="normal"
-                          className="rounded"
-                          colorScheme="indigo"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <MessageDisplay messageKey="search" />
-            </div>
-          </div>
-
-          {/* Translate & Search Section */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Book className="w-5 h-5" />
-              Translate & Find Examples
-            </h2>
-            
-            <div className="space-y-4">
+              
               <input
                 type="text"
                 value={translateSearchWord}
                 onChange={(e) => setTranslateSearchWord(e.target.value)}
-                placeholder="Enter word to translate and find examples..."
+                placeholder="Enter any word to translate and find examples..."
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 onKeyPress={(e) => e.key === 'Enter' && handleTranslateSearch()}
               />
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">From:</label>
                   <select
                     value={translateSearchSrc}
@@ -1105,7 +1429,23 @@ const LanguageTranslatorApp = () => {
                     ))}
                   </select>
                 </div>
-                <div>
+                
+                <button 
+                  onClick={() => {
+                    const newSrc = translateSearchTgt;
+                    const newTgt = translateSearchSrc;
+                    setTranslateSearchSrc(newSrc);
+                    setTranslateSearchTgt(newTgt);
+                    // Clear previous results when swapping
+                    setTranslateSearchResults(null);
+                  }}
+                  className="p-3 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors mb-0"
+                  title="Swap languages"
+                >
+                  <ArrowRightLeft className="w-5 h-5" />
+                </button>
+                
+                <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">To:</label>
                   <select
                     value={translateSearchTgt}
@@ -1125,93 +1465,143 @@ const LanguageTranslatorApp = () => {
               <button
                 onClick={handleTranslateSearch}
                 disabled={loading.translateSearch || !translateSearchWord.trim()}
-                className="w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
               >
                 {loading.translateSearch ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
                 ) : (
-                  <Book className="w-5 h-5" />
+                  <Search className="w-5 h-5" />
                 )}
-                Translate & Search
+                Search & Translate
               </button>
 
-              {translateSearchResults && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 relative">
-                    <div className="pr-12">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium">Original:</span> 
-                        <span>{translateSearchResults.source_word}</span>
-                        <SpeechButton 
-                          text={translateSearchResults.source_word} 
-                          language={translateSearchSrc} 
-                          size="normal"
-                          className="rounded"
-                          colorScheme="blue"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Translation:</span> 
-                        <span>{translateSearchResults.translated_word}</span>
-                        <SpeechButton 
-                          text={translateSearchResults.translated_word} 
-                          language={translateSearchTgt} 
-                          size="normal"
-                          className="rounded"
-                          colorScheme="blue"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {translateSearchResults.examples && translateSearchResults.examples.length > 0 && (
-                    <div>
-                      <h3 className="font-medium text-gray-700 mb-2">Examples:</h3>
-                      <div className="space-y-2">
-                        {translateSearchResults.examples.map((example, index) => {
-                          // Determine if example has translation info
-                          const isTranslationPair = typeof example === 'object' && example.sentence;
-                          const sentence = isTranslationPair ? example.sentence : example;
-                          const translation = isTranslationPair ? example.translation : null;
-                          const exampleLang = isTranslationPair ? example.lang : translateSearchTgt;
-                          
-                          return (
-                            <div key={index} className="p-3 bg-gray-50 rounded-lg border relative">
-                              <div className="pr-12">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <p className="text-gray-700">{sentence}</p>
-                                  <SpeechButton 
-                                    text={sentence} 
-                                    language={exampleLang} 
-                                    size="normal"
-                                    className="rounded"
-                                    colorScheme="indigo"
-                                  />
-                                </div>
-                                {translation && (
-                                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                                    <span>{translation}</span>
-                                    <SpeechButton 
-                                      text={translation} 
-                                      language={example.translation_lang} 
-                                      size="small"
-                                      className="rounded"
-                                      colorScheme="indigo"
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">
+                <p>💡 <strong>How it works:</strong> Translates your word and finds example sentences. 
+                Searches for "{learningLanguage.toUpperCase()}" sentences in your corpus containing relevant words.
+                </p>
+              </div>
+
+
 
               <MessageDisplay messageKey="translateSearch" />
             </div>
+          </div>
+        </div>
+
+        {/* Word Frequency Analysis Section */}
+        <div className="bg-white rounded-xl shadow-lg p-6 mt-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            Word Frequency Analysis
+          </h2>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Part of Speech</label>
+                <select
+                  value={selectedPosTag}
+                  onChange={(e) => setSelectedPosTag(e.target.value)}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  disabled={loading.languages}
+                >
+                  <option value="">Select POS tag...</option>
+                  {posTags.map(tag => (
+                    <option key={tag.pos_tag} value={tag.pos_tag}>
+                      {tag.pos_tag} - {tag.description} ({tag.count.toLocaleString()} unique words)
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Start Rank</label>
+                <input
+                  type="number"
+                  value={startRank}
+                  onChange={(e) => setStartRank(e.target.value)}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="1"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">End Rank</label>
+                <input
+                  type="number"
+                  value={endRank}
+                  onChange={(e) => setEndRank(e.target.value)}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="50"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={handleWordFrequency}
+              disabled={loading.wordFrequency || !selectedPosTag}
+              className="w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+            >
+              {loading.wordFrequency ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              )}
+              Analyze Word Frequency
+            </button>
+
+            <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">
+              <p>💡 <strong>How it works:</strong> Analyzes the most frequent words by part of speech (POS) in your corpus. 
+              Ranks {startRank} to {endRank} show the {selectedPosTag ? `${selectedPosTag} words` : 'words'} ordered by frequency.
+              </p>
+            </div>
+
+            {wordFrequencyResults && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-800">
+                    Top {selectedPosTag} Words (Ranks {startRank}-{endRank})
+                  </h3>
+                  <span className="text-sm text-gray-500">
+                    {wordFrequencyResults.words?.length || 0} words found
+                  </span>
+                </div>
+                
+                <div className="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {wordFrequencyResults.words?.map((item, index) => (
+                      <div 
+                        key={index} 
+                        className="bg-white rounded-lg p-3 shadow-sm border border-gray-200 hover:border-purple-300 hover:shadow-md transition-all duration-200 cursor-pointer"
+                        onClick={() => fetchWordExamples(item.word)}
+                        title={`Click to see examples of "${item.word}"`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-gray-800 hover:text-purple-600 transition-colors">
+                            #{item.rank} {item.word}
+                          </span>
+                          <span className="text-sm text-gray-500">
+                            {item.count}×
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1">
+                          {item.percentage}% of {selectedPosTag} words
+                        </div>
+                        <div className="text-xs text-purple-500 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          Click for examples →
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <MessageDisplay messageKey="wordFrequency" />
           </div>
         </div>
 
@@ -1336,6 +1726,9 @@ const LanguageTranslatorApp = () => {
 
       {/* Reading View Modal */}
       <ReadingViewModal />
+      
+      {/* Word Examples Modal */}
+      <WordExamplesModal />
     </div>
   );
 };
