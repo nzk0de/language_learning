@@ -22,6 +22,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------- Dependencies ----------
 def get_translator():
@@ -90,62 +98,163 @@ async def translate_and_store(
     }
 
 
-@app.get("/search")
-def search(
-    word: str,
-    lang: str = "de",
-    limit: int = 5,
-    elastic: ElasticHelper = Depends(get_elastic),
-):
-    if not validate_word(word, lang):
-        return {"error": f"'{word}' is not a valid word in {lang}"}
-    return {"examples": elastic.search_examples(word, lang, limit)}
-
 
 @app.get("/translate_search")
 async def translate_search(
-    word: str = Query(..., description="Single word in source language"),
+    word: str = Query(..., description="Single word in any language"),
     src_lang: str = "en",
     tgt_lang: str = "de",
+    corpus_lang: str = Query("de", description="Language of the corpus to search in"),
     limit: int = 5,
     translator: MYTranslator = Depends(get_translator),
     elastic: ElasticHelper = Depends(get_elastic),
 ):
+    """Simplified translate and search: translates word and searches specified corpus language"""
     # ✅ Validate input is a real single word in source language
     if not validate_word(word, src_lang):
         return {"error": f"'{word}' is not a valid word in {src_lang}"}
 
+    # Validate language codes
+    if src_lang not in translator.lang_codes or tgt_lang not in translator.lang_codes or corpus_lang not in translator.lang_codes:
+        return {"error": f"Invalid lang code. Supported: {sorted(translator.lang_codes)}"}
+
     # Step 1: Translate word using async method
     translated = await translator.translate(word, src=src_lang, dest=tgt_lang)
 
-    # Step 2: Query ES in target language - try translation pairs first
-    translation_results = elastic.search_translation_pairs(translated, tgt_lang, limit)
-    
-    # Fallback to regular search if no translation pairs found
-    if not translation_results:
-        examples = elastic.search_examples(translated, tgt_lang, limit)
-        translation_results = [{"sentence": ex, "lang": tgt_lang} for ex in examples]
+    # Step 2: Simplified logic - determine what word to search for in corpus_lang
+    if src_lang == corpus_lang:
+        # Input is in corpus language, search for original word
+        search_word = word
+    elif tgt_lang == corpus_lang:
+        # Translation target is corpus language, search for translated word
+        search_word = translated
+    else:
+        # Neither input nor target matches corpus language - translate to corpus language
+        search_word = await translator.translate(word, src=src_lang, dest=corpus_lang)
+
+    # Step 3: Always search in the specified corpus language
+    examples = elastic.search_unified(search_word, corpus_lang, limit)
 
     return {
-        "source_word": word, 
-        "translated_word": translated, 
-        "examples": translation_results
+        "source_word": word,
+        "source_lang": src_lang, 
+        "translated_word": translated,
+        "target_lang": tgt_lang,
+        "search_word": search_word,
+        "corpus_lang": corpus_lang,
+        "examples": examples,
+        "total_found": len(examples)
     }
 
 
-@app.get("/search_with_translations")
-def search_with_translations(
-    word: str,
+@app.get("/quality/config")
+def get_quality_config(elastic: ElasticHelper = Depends(get_elastic)):
+    """Get current quality filtering configuration"""
+    return {
+        "config": elastic.quality_config,
+        "description": {
+            "min_length": "Minimum sentence length in characters",
+            "max_length": "Maximum sentence length in characters", 
+            "min_words": "Minimum number of words in sentence",
+            "max_upper_ratio": "Maximum ratio of uppercase letters (0.0-1.0)",
+            "min_alpha_ratio": "Minimum ratio of alphabetic characters (0.0-1.0)",
+            "enable_quality_filter": "Whether to apply quality filtering"
+        }
+    }
+
+
+@app.post("/quality/config")
+def update_quality_config(
+    config: dict,
+    elastic: ElasticHelper = Depends(get_elastic)
+):
+    """Update quality filtering configuration"""
+    try:
+        elastic.configure_quality_filter(**config)
+        return {
+            "success": True,
+            "message": "Quality configuration updated",
+            "new_config": elastic.quality_config
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.get("/word_frequency/{pos_tag}")
+def get_word_frequency_by_pos(
+    pos_tag: str,
     lang: str = "de",
-    limit: int = 5,
+    start_rank: int = Query(1, description="Starting rank (1-based)", ge=1),
+    end_rank: int = Query(None, description="Ending rank (1-based)"),
+    size: int = Query(50, description="Maximum results to fetch", le=500),
     elastic: ElasticHelper = Depends(get_elastic),
 ):
-    """Search for sentences containing a word and return translation pairs if available"""
-    if not validate_word(word, lang):
-        return {"error": f"'{word}' is not a valid word in {lang}"}
+    """Get word frequency analysis by POS tag with ranking range"""
+    try:
+        result = elastic.get_word_frequency_by_pos(
+            pos_tag=pos_tag,
+            lang=lang,
+            size=size,
+            start_rank=start_rank,
+            end_rank=end_rank
+        )
+        
+        if "error" in result:
+            return {"error": result["error"]}
+            
+        return result
+        
+    except Exception as e:
+        return {"error": f"Failed to get word frequency: {str(e)}"}
+
+
+@app.get("/pos_tags")
+def get_available_pos_tags(
+    lang: str = "de",
+    limit: int = Query(50, description="Maximum POS tags to return", le=100),
+    elastic: ElasticHelper = Depends(get_elastic),
+):
+    """Get all available POS tags in the corpus"""
+    try:
+        pos_tags = elastic.get_available_pos_tags(lang=lang, limit=limit)
+        return {
+            "language": lang,
+            "pos_tags": pos_tags,
+            "total_count": len(pos_tags)
+        }
+        
+    except Exception as e:
+        return {"error": f"Failed to get POS tags: {str(e)}"}
+
+
+
+@app.post("/quality/test")
+def test_sentence_quality(
+    sentences: list[str],
+    elastic: ElasticHelper = Depends(get_elastic)
+):
+    """Test sentence quality for a list of sentences"""
+    results = []
+    for sentence in sentences:
+        is_quality = elastic.is_quality_sentence(sentence)
+        results.append({
+            "sentence": sentence,
+            "is_quality": is_quality,
+            "length": len(sentence),
+            "word_count": len(sentence.split())
+        })
     
-    results = elastic.search_translation_pairs(word, lang, limit)
-    return {"word": word, "examples": results}
+    stats = elastic.get_quality_stats(sentences)
+    
+    return {
+        "results": results,
+        "stats": stats,
+        "config_used": elastic.quality_config
+    }
+
 
 
 
