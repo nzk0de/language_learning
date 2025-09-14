@@ -66,6 +66,7 @@ const LanguageTranslatorApp = () => {
   const [wordExamplesModal, setWordExamplesModal] = useState({
     isOpen: false,
     word: '',
+    translatedWord: '',
     examples: [],
     loading: false
   });
@@ -394,12 +395,33 @@ const LanguageTranslatorApp = () => {
     setWordExamplesModal({
       isOpen: true,
       word: translateSearchWord,
+      translatedWord: '',
       examples: [],
       loading: true
     });
     
     setLoadingState('translateSearch', true);
     try {
+      // First, get the Greek translation of the word
+      let translatedWord = '';
+      try {
+        const translateResponse = await fetch(`${API_BASE}/translate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: translateSearchWord,
+            src_lang: translateSearchSrc,
+            tgt_lang: 'el' // Greek
+          })
+        });
+        const translateData = await translateResponse.json();
+        if (translateData.translation) {
+          translatedWord = translateData.translation;
+        }
+      } catch (error) {
+        console.log('Could not fetch Greek translation:', error);
+      }
+
       // New simplified logic: 
       // - Use translateSearchSrc as the input language
       // - Use translateSearchTgt as the translation target  
@@ -417,15 +439,18 @@ const LanguageTranslatorApp = () => {
         }));
       } else {
         console.log('Translate search response:', data); // Debug log
+        // Use the Greek translation we fetched earlier, or fallback to API response
+        const finalTranslatedWord = translatedWord || data.translated_word || '';
         // Open the modal with examples instead of setting inline results
         setWordExamplesModal(prev => ({
           ...prev,
+          translatedWord: finalTranslatedWord,
           examples: data.examples || [],
           loading: false
         }));
         const sourceWord = data.source_word || translateSearchWord;
-        const translatedWord = data.translated_word || 'translation';
-        setMessage('translateSearch', `Found ${data.examples?.length || 0} examples for "${sourceWord}" → "${translatedWord}"`, 'success');
+        const displayTranslatedWord = data.translated_word || 'translation';
+        setMessage('translateSearch', `Found ${data.examples?.length || 0} examples for "${sourceWord}" → "${displayTranslatedWord}"`, 'success');
       }
     } catch (error) {
       setMessage('translateSearch', 'Translate search failed', 'error');
@@ -499,11 +524,32 @@ const LanguageTranslatorApp = () => {
     setWordExamplesModal({
       isOpen: true,
       word: word,
+      translatedWord: '',
       examples: [],
       loading: true
     });
 
     try {
+      // First, get the Greek translation of the word
+      let translatedWord = '';
+      try {
+        const translateResponse = await fetch(`${API_BASE}/translate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: word,
+            src_lang: learningLanguage,
+            tgt_lang: 'el' // Greek
+          })
+        });
+        const translateData = await translateResponse.json();
+        if (translateData.translation) {
+          translatedWord = translateData.translation;
+        }
+      } catch (error) {
+        console.log('Could not fetch Greek translation:', error);
+      }
+
       // Use learningLanguage as source (corpus language) and English as target for translation
       const response = await fetch(
         `${API_BASE}/translate_search?word=${encodeURIComponent(word)}&src_lang=${learningLanguage}&tgt_lang=en&corpus_lang=${learningLanguage}&limit=10`
@@ -519,6 +565,7 @@ const LanguageTranslatorApp = () => {
       } else {
         setWordExamplesModal(prev => ({
           ...prev,
+          translatedWord: translatedWord,
           examples: data.examples || [],
           loading: false
         }));
@@ -536,6 +583,7 @@ const LanguageTranslatorApp = () => {
     setWordExamplesModal({
       isOpen: false,
       word: '',
+      translatedWord: '',
       examples: [],
       loading: false
     });
@@ -895,6 +943,11 @@ const LanguageTranslatorApp = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
               Examples for "{wordExamplesModal.word}"
+              {wordExamplesModal.translatedWord && (
+                <span className="text-lg text-gray-600 ml-2">
+                  → {wordExamplesModal.translatedWord}
+                </span>
+              )}
             </h2>
             <button
               onClick={closeWordExamplesModal}
@@ -967,7 +1020,7 @@ const LanguageTranslatorApp = () => {
                                   body: JSON.stringify({
                                     text: sentence,
                                     src_lang: exampleLang,
-                                    tgt_lang: 'en'
+                                    tgt_lang: 'el'
                                   }),
                                 });
                                 const translateData = await response.json();
