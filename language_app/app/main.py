@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from app.es_utils import ElasticHelper
-from app.schema import InputText, InsertText, TranslateAndStoreText
+from app.schema import InputText, InsertText
 from app.translation import MYTranslator
 from app.validators import validate_sentence, validate_word
 from app.book_manager import BookManager
@@ -66,44 +66,6 @@ def get_languages(translator: MYTranslator = Depends(get_translator)):
         "languages": translator.supported_languages,
         "language_codes": sorted(translator.lang_codes),
         "total_supported": len(translator.lang_codes)
-    }
-
-
-@app.post("/insert")
-def insert(item: InsertText, elastic: ElasticHelper = Depends(get_elastic)):
-    if not validate_sentence(item.text, item.lang):
-        return {"error": f"Text is not detected as {item.lang}"}
-    return elastic.insert_text(item.text, item.lang)
-
-
-@app.post("/translate_and_store")
-async def translate_and_store(
-    item: TranslateAndStoreText, 
-    translator: MYTranslator = Depends(get_translator),
-    elastic: ElasticHelper = Depends(get_elastic)
-):
-    """Translate text and store both original and translation in Elasticsearch"""
-    if item.src_lang not in translator.lang_codes or item.tgt_lang not in translator.lang_codes:
-        return {"error": f"Invalid lang code. Supported: {sorted(translator.lang_codes)}"}
-    
-    # Validate original text
-    if not validate_sentence(item.text, item.src_lang):
-        return {"error": f"Text is not detected as {item.src_lang}"}
-    
-    # Translate using the async method
-    translation = await translator.translate(item.text, src=item.src_lang, dest=item.tgt_lang)
-    
-    # Store both original and translation
-    storage_result = elastic.insert_translation_pair(
-        item.text, translation, item.src_lang, item.tgt_lang
-    )
-    
-    return {
-        "original": item.text,
-        "translation": translation,
-        "src_lang": item.src_lang,
-        "tgt_lang": item.tgt_lang,
-        "storage_result": storage_result
     }
 
 

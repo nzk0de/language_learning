@@ -12,10 +12,4 @@ class InsertText(BaseModel):
     lang: str
 
 
-class TranslateAndStoreText(BaseModel):
-    text: str
-    src_lang: str = "de"
-    tgt_lang: str = "en"
-
-
 

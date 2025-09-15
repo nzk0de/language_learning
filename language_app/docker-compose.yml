@@ -44,5 +44,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
   esdata:
+    external: true
+    name: local_esdata

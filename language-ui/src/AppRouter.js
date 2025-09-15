@@ -1,7 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Languages, Book } from 'lucide-react';
-import App from './App';
+import { Languages, Book, BarChart3, Maximize2 } from 'lucide-react';
 import BooksPage from './BooksPage';
+import TranslationPage from './TranslationPage';
+import AnalysisPage from './AnalysisPage';
 
 const Navigation = () => {
   const location = useLocation();
@@ -27,25 +28,38 @@ const Navigation = () => {
             {/* Enhanced Navigation Links */}
             <div className="flex space-x-2">
               <Link
-                to="/"
-                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-3 transform hover:-translate-y-0.5 ${
-                  location.pathname === '/'
+                to="/translation"
+                className={`px-4 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 transform hover:-translate-y-0.5 ${
+                  location.pathname === '/translation'
                     ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25'
                     : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50/80 hover:shadow-md'
                 }`}
               >
-                <Languages className="w-5 h-5" />
-                <span>Translator</span>
+                <Maximize2 className="w-4 h-4" />
+                <span className="hidden lg:inline">Translation & Videos</span>
+                <span className="lg:hidden">Translate</span>
+              </Link>
+              <Link
+                to="/analysis"
+                className={`px-4 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 transform hover:-translate-y-0.5 ${
+                  location.pathname === '/analysis'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-500/25'
+                    : 'text-gray-600 hover:text-purple-600 hover:bg-purple-50/80 hover:shadow-md'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+                <span className="hidden lg:inline">Analysis & Research</span>
+                <span className="lg:hidden">Analysis</span>
               </Link>
               <Link
                 to="/books"
-                className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-3 transform hover:-translate-y-0.5 ${
+                className={`px-4 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 transform hover:-translate-y-0.5 ${
                   location.pathname === '/books'
                     ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25'
                     : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50/80 hover:shadow-md'
                 }`}
               >
-                <Book className="w-5 h-5" />
+                <Book className="w-4 h-4" />
                 <span>Library</span>
               </Link>
             </div>
@@ -68,7 +82,9 @@ const AppRouter = () => {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
         <Navigation />
         <Routes>
-          <Route path="/" element={<App />} />
+          <Route path="/" element={<TranslationPage />} />
+          <Route path="/translation" element={<TranslationPage />} />
+          <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/books" element={<BooksPage />} />
         </Routes>
       </div>
