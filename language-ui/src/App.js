@@ -9,8 +9,6 @@ const LanguageTranslatorApp = () => {
   const [tgtLang, setTgtLang] = useState('de');
   const [translationText, setTranslationText] = useState('');
   const [translation, setTranslation] = useState('');
-  const [insertText, setInsertText] = useState('');
-  const [insertLang, setInsertLang] = useState('de');
   const [translateSearchWord, setTranslateSearchWord] = useState('');
   const [translateSearchSrc, setTranslateSearchSrc] = useState('en');
   const [translateSearchTgt, setTranslateSearchTgt] = useState('de');
@@ -32,7 +30,6 @@ const LanguageTranslatorApp = () => {
     languages: false,
     translate: false,
     translateAndStore: false,
-    insert: false,
     translateSearch: false,
     wordFrequency: false,
     posTags: false
@@ -355,34 +352,6 @@ const LanguageTranslatorApp = () => {
       setMessage('translate', 'Translation and storage failed', 'error');
     } finally {
       setLoadingState('translateAndStore', false);
-    }
-  };
-
-  const handleInsert = async () => {
-    if (!insertText.trim()) return;
-    
-    setLoadingState('insert', true);
-    try {
-      const response = await fetch(`${API_BASE}/insert`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: insertText,
-          lang: insertLang
-        })
-      });
-      const data = await response.json();
-      
-      if (data.error) {
-        setMessage('insert', data.error, 'error');
-      } else {
-        setMessage('insert', 'Text added to corpus successfully!', 'success');
-        setInsertText('');
-      }
-    } catch (error) {
-      setMessage('insert', 'Failed to add text to corpus', 'error');
-    } finally {
-      setLoadingState('insert', false);
     }
   };
 
@@ -1204,7 +1173,7 @@ const LanguageTranslatorApp = () => {
               </button>
             )}
           </div>
-          <p className="text-gray-600">Translate text, manage your corpus, and explore word meanings</p>
+          <p className="text-gray-600">Translate text and explore word meanings with examples</p>
           {speechState.isSpeaking && (
             <div className="mt-2">
               <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-sm">
@@ -1366,62 +1335,6 @@ const LanguageTranslatorApp = () => {
               )}
 
               <MessageDisplay messageKey="translate" />
-            </div>
-          </div>
-
-          {/* Add to Corpus Section */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Plus className="w-5 h-5" />
-              Add to Corpus
-            </h2>
-            
-            <div className="space-y-4">
-              <select
-                value={insertLang}
-                onChange={(e) => setInsertLang(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                disabled={loading.languages}
-              >
-                {languages.map(lang => (
-                  <option key={lang} value={lang}>
-                    {lang} - {languageNames[lang] || lang}
-                  </option>
-                ))}
-              </select>
-
-              <div className="relative">
-                <textarea
-                  value={insertText}
-                  onChange={(e) => setInsertText(e.target.value)}
-                  placeholder="Enter text to add to corpus..."
-                  className="w-full p-3 pr-12 border border-gray-300 rounded-lg h-32 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
-                />
-                {insertText && (
-                  <SpeechButton 
-                    text={insertText} 
-                    language={insertLang} 
-                    size="normal"
-                    className="absolute top-3 right-3 rounded-lg"
-                    colorScheme="green"
-                  />
-                )}
-              </div>
-
-              <button
-                onClick={handleInsert}
-                disabled={loading.insert || !insertText.trim()}
-                className="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
-              >
-                {loading.insert ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Plus className="w-5 h-5" />
-                )}
-                Add to Corpus
-              </button>
-
-              <MessageDisplay messageKey="insert" />
             </div>
           </div>
 
