@@ -9,11 +9,16 @@ from .quality_checker import quality_checker
 class ElasticHelper:
     def __init__(self):
         self.client = Elasticsearch(os.getenv("ES_HOST", "http://localhost:9200"))
+        
+        # Set consistent index name for the whole class
+        self.index_name = "german_books"  # This is your main index
+        
         # Initialize Stanza pipeline once
         try:
             self.stanza_nlp = stanza.Pipeline('en', processors='tokenize', verbose=False)
         except:
             self.stanza_nlp = None
+        
         
         # Initialize quality checker
         self.quality_checker = SentenceQualityChecker()
@@ -27,6 +32,11 @@ class ElasticHelper:
             'min_alpha_ratio': 0.7,
             'enable_quality_filter': True
         }
+    def ensure_index(self, lang: str = None):
+        """Ensure the main index exists - lang parameter kept for compatibility"""
+        if not self.client.indices.exists(index=self.index_name):
+            self.client.indices.create(index=self.index_name)
+        return self.index_name
 
     def split_sentences(self, text: str) -> list[str]:
         """Split text into sentences using Stanza"""
@@ -142,12 +152,6 @@ class ElasticHelper:
             "quality_rate": round(quality_rate, 3)
         }
 
-    def ensure_index(self, lang: str):
-        index_name = f"sentences_{lang}"
-        if not self.client.indices.exists(index=index_name):
-            self.client.indices.create(index=index_name)
-
-        return index_name
 
     def insert_text(self, text: str, lang: str):
         """Insert text without translation - with quality filtering"""
@@ -254,7 +258,7 @@ class ElasticHelper:
     def search_examples(self, word: str, lang: str, limit: int = 5):
         """Search for examples of a word in your Wikipedia corpus with consistent format"""
         # Use your actual corpus index name
-        corpus_index = f"wiki_docs_{lang}"
+
         
         try:
             # Search in sentence_text field (based on your corpus structure)
@@ -296,7 +300,7 @@ class ElasticHelper:
                 "size": limit * 3  # Fetch more results to account for quality filtering
             }
             
-            res = self.client.search(index=corpus_index, body=query)
+            res = self.client.search(index=self.index_name, body=query)
             
             examples = []
             for hit in res["hits"]["hits"]:
@@ -337,7 +341,7 @@ class ElasticHelper:
         """Fallback to old sentence index if corpus not available - with consistent format and quality filtering"""
         try:
             index_name = self.ensure_index(lang)
-            res = self.client.search(index=index_name, query={"match": {"sentence": word}}, size=limit * 2)
+            res = self.client.search(index=self.index_name, query={"match": {"sentence": word}}, size=limit * 2)
             examples = []
             for hit in res["hits"]["hits"]:
                 source = hit["_source"]
@@ -704,7 +708,6 @@ class ElasticHelper:
         # Ensure we fetch enough data to get the requested range
         fetch_size = max(size, end_rank)
         
-        index_name = f"wiki_docs_{lang}"
         
         try:
             query = {
@@ -736,7 +739,7 @@ class ElasticHelper:
                 }
             }
             
-            response = self.client.search(index=index_name, body=query)
+            response = self.client.search(index=self.index_name, body=query)
             
             # Extract results
             buckets = response["aggregations"]["words_by_pos"]["filter_pos"]["word_frequency"]["buckets"]
@@ -788,7 +791,6 @@ class ElasticHelper:
         Returns:
             list: Available POS tags with unique word counts
         """
-        index_name = f"wiki_docs_{lang}"
         
         try:
             query = {
@@ -818,7 +820,7 @@ class ElasticHelper:
                 }
             }
             
-            response = self.client.search(index=index_name, body=query)
+            response = self.client.search(index=self.index_name, body=query)
             buckets = response["aggregations"]["pos_tags"]["unique_pos"]["buckets"]
             
             return [

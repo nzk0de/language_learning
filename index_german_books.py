@@ -23,6 +23,11 @@ from datetime import datetime
 from elasticsearch import Elasticsearch, helpers
 from elasticsearch.exceptions import ConnectionError, RequestError
 from tqdm import tqdm
+import stanza
+
+# Import the shared quality checker
+sys.path.append('language_app')
+from language_app.app.quality_checker import SentenceQualityChecker
 
 # Configure logging
 logging.basicConfig(
@@ -59,6 +64,8 @@ class GermanBooksIndexer:
         
         # Initialize components
         self.es = None
+        self.nlp = None  # Stanza pipeline
+        self.quality_checker = SentenceQualityChecker()
         
         # Simple tracking file for processed books
         self.processed_books_file = Path("processed_german_books.txt")
@@ -118,7 +125,22 @@ class GermanBooksIndexer:
                     "sentence_number": {"type": "integer"},
                     "word_count": {"type": "integer"},
                     "char_count": {"type": "integer"},
-                    "indexed_date": {"type": "date"}
+                    "indexed_date": {"type": "date"},
+                    "tokens": {
+                        "type": "nested",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "text": {"type": "text"},
+                            "lemma": {"type": "keyword"},
+                            "upos": {"type": "keyword"},
+                            "xpos": {"type": "keyword"},
+                            "feats": {"type": "keyword"},
+                            "head": {"type": "integer"},
+                            "deprel": {"type": "keyword"},
+                            "start_char": {"type": "integer"},
+                            "end_char": {"type": "integer"}
+                        }
+                    }
                 }
             }
         }
@@ -147,7 +169,22 @@ class GermanBooksIndexer:
                     "sentence_number": {"type": "integer"},
                     "word_count": {"type": "integer"},
                     "char_count": {"type": "integer"},
-                    "indexed_date": {"type": "date"}
+                    "indexed_date": {"type": "date"},
+                    "tokens": {
+                        "type": "nested",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "text": {"type": "text"},
+                            "lemma": {"type": "keyword"},
+                            "upos": {"type": "keyword"},
+                            "xpos": {"type": "keyword"},
+                            "feats": {"type": "keyword"},
+                            "head": {"type": "integer"},
+                            "deprel": {"type": "keyword"},
+                            "start_char": {"type": "integer"},
+                            "end_char": {"type": "integer"}
+                        }
+                    }
                 }
             }
         }
@@ -163,6 +200,59 @@ class GermanBooksIndexer:
         except RequestError as e:
             logger.error(f"Error force recreating index: {e}")
             raise
+    
+    def initialize_stanza(self) -> bool:
+        """
+        Initialize Stanza NLP pipeline.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            logger.info("Initializing Stanza pipeline for German language...")
+            self.nlp = stanza.Pipeline(
+                lang='de',
+                processors='tokenize,pos,lemma'
+            )
+            logger.info("Stanza pipeline initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error initializing Stanza: {e}")
+            return False
+    
+    def process_with_stanza(self, text: str) -> Dict:
+        """
+        Process text with Stanza NLP pipeline and return sentence dictionary.
+        
+        Args:
+            text: Raw text to process
+            
+        Returns:
+            Dict with doc_dict (sentences) and statistics
+        """
+        try:
+            # Limit text length to avoid memory issues
+            max_chars = 10000
+            if len(text) > max_chars:
+                text = text[:max_chars] + "..."
+            
+            doc = self.nlp(text)
+            doc_dict = doc.to_dict()
+            
+            return {
+                "doc_dict": doc_dict,
+                "sentence_count": len(doc_dict),
+                "word_count": sum(len(sentence) for sentence in doc_dict)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing text with Stanza: {e}")
+            return {
+                "doc_dict": [],
+                "sentence_count": 0,
+                "word_count": 0
+            }
     
     def get_processed_books(self) -> set:
         """
@@ -238,34 +328,36 @@ class GermanBooksIndexer:
     
     def split_into_sentences(self, text: str) -> List[str]:
         """
-        Split text into sentences using simple sentence boundary detection.
+        Split text into sentences using Stanza NLP processing.
         
         Args:
             text: Raw text to split
             
         Returns:
-            List of sentences
+            List of sentences with NLP data
         """
         try:
-            # Simple sentence splitting - can be improved with more sophisticated NLP
+            # Process text with Stanza to get proper sentence segmentation
+            nlp_data = self.process_with_stanza(text)
+            
             sentences = []
+            doc_dict = nlp_data.get("doc_dict", [])
             
-            # Split by common sentence endings
-            text = re.sub(r'\n+', ' ', text)  # Replace newlines with spaces
-            text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
-            
-            # Split on sentence boundaries
-            raw_sentences = re.split(r'[.!?]+\s+', text)
-            
-            for sentence in raw_sentences:
-                sentence = sentence.strip()
-                if sentence and len(sentence) > 10:  # Filter very short sentences
-                    sentences.append(sentence)
+            for sentence in doc_dict:
+                # Extract sentence text from tokens
+                sentence_text = " ".join([token['text'] for token in sentence])
+                sentence_text = sentence_text.strip()
+                
+                if sentence_text and len(sentence_text) > 10:  # Filter very short sentences
+                    sentences.append({
+                        'text': sentence_text,
+                        'tokens': sentence
+                    })
             
             return sentences
             
         except Exception as e:
-            logger.error(f"Error splitting text into sentences: {e}")
+            logger.error(f"Error splitting text into sentences with Stanza: {e}")
             return []
     
     def index_book(self, file_path: Path) -> bool:
@@ -288,17 +380,24 @@ class GermanBooksIndexer:
             with open(file_path, 'r', encoding='utf-8') as f:
                 text = f.read()
             
-            # Split into sentences
-            sentences = self.split_into_sentences(text)
+            # Split into sentences with Stanza NLP processing
+            sentences_data = self.split_into_sentences(text)
             
-            if not sentences:
+            if not sentences_data:
                 logger.warning(f"No sentences found in {filename}")
                 return False
             
             # Prepare documents for bulk indexing
             documents = []
             
-            for sent_idx, sentence_text in enumerate(sentences):
+            for sent_idx, sentence_data in enumerate(sentences_data):
+                sentence_text = sentence_data['text']
+                tokens = sentence_data['tokens']
+                
+                # Quality check using shared quality checker
+                if not self.quality_checker.is_quality_sentence(sentence_text):
+                    continue
+                
                 # Create unique sentence ID
                 sentence_id = f"{book_info['clean_filename']}_{sent_idx:06d}"
                 
@@ -316,7 +415,8 @@ class GermanBooksIndexer:
                     "sentence_number": sent_idx + 1,
                     "word_count": word_count,
                     "char_count": len(sentence_text),
-                    "indexed_date": datetime.now().isoformat()
+                    "indexed_date": datetime.now().isoformat(),
+                    "tokens": tokens  # Add full token data with POS tags
                 }
                 
                 documents.append({
@@ -449,6 +549,11 @@ def main():
     # Initialize Elasticsearch
     if not indexer.initialize_elasticsearch(force_recreate=args.force_recreate):
         logger.error("Failed to initialize Elasticsearch")
+        return 1
+    
+    # Initialize Stanza
+    if not indexer.initialize_stanza():
+        logger.error("Failed to initialize Stanza")
         return 1
     
     # Process all books
