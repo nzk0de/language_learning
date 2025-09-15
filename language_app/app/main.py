@@ -1,12 +1,16 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware  # Add this import
+from fastapi import Depends, FastAPI, Query, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+import os
 
 from app.es_utils import ElasticHelper
 from app.schema import InputText, InsertText, TranslateAndStoreText
 from app.translation import MYTranslator
 from app.validators import validate_sentence, validate_word
+from app.book_manager import BookManager
 
 
 @asynccontextmanager
@@ -14,6 +18,7 @@ async def lifespan(app: FastAPI):
     try:
         app.state.translator = MYTranslator()
         app.state.elastic = ElasticHelper()
+        app.state.book_manager = BookManager()
         yield
     finally:
         # if you need cleanup, do it here
@@ -38,6 +43,10 @@ def get_translator():
 
 def get_elastic():
     return app.state.elastic
+
+
+def get_book_manager():
+    return app.state.book_manager
 
 
 # ---------- Endpoints ----------
@@ -256,12 +265,271 @@ def test_sentence_quality(
     }
 
 
+# ---------- Book Management Endpoints ----------
+
+@app.get("/books")
+def get_books(
+    search: str = Query(None, description="Search books by title, author, or description"),
+    refresh: bool = Query(False, description="Force refresh book metadata cache"),
+    book_manager: BookManager = Depends(get_book_manager)
+):
+    """Get all available EPUB books with metadata"""
+    try:
+        if search:
+            books = book_manager.search_books(search)
+        else:
+            books = book_manager.get_all_books(force_refresh=refresh)
+        
+        return {
+            "books": books,
+            "count": len(books),
+            "search_query": search if search else None
+        }
+        
+    except Exception as e:
+        return {"error": f"Failed to get books: {str(e)}"}
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development (includes Chrome extensions)
-    allow_credentials=False,  # Must be False when allow_origins=["*"]
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.get("/books/{filename}")
+def get_book_info(
+    filename: str,
+    book_manager: BookManager = Depends(get_book_manager)
+):
+    """Get detailed information about a specific book"""
+    try:
+        book = book_manager.get_book_by_filename(filename)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+        
+        return book
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"error": f"Failed to get book info: {str(e)}"}
+
+
+@app.get("/books/{filename}/download")
+def download_book(
+    filename: str,
+    book_manager: BookManager = Depends(get_book_manager)
+):
+    """Download an EPUB book file"""
+    try:
+        book_path = book_manager.get_book_path(filename)
+        if not book_path:
+            raise HTTPException(status_code=404, detail="Book file not found")
+        
+        return FileResponse(
+            path=book_path,
+            filename=filename,
+            media_type="application/epub+zip"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to download book: {str(e)}")
+
+
+@app.get("/books/{filename}/cover")
+def get_book_cover(
+    filename: str,
+    book_manager: BookManager = Depends(get_book_manager)
+):
+    """Get book cover image"""
+    try:
+        cover_data = book_manager.get_book_cover(filename)
+        if not cover_data:
+            raise HTTPException(status_code=404, detail="Cover image not found")
+        
+        from fastapi.responses import Response
+        return Response(
+            content=cover_data,
+            media_type="image/jpeg"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get cover: {str(e)}")
+
+
+@app.get("/books/{filename}/read")
+def serve_epub_for_reading(
+    filename: str,
+    book_manager: BookManager = Depends(get_book_manager)
+):
+    """Serve EPUB file for online reading with proper CORS headers"""
+    try:
+        book_path = book_manager.get_book_path(filename)
+        if not book_path:
+            raise HTTPException(status_code=404, detail="Book file not found")
+        
+        return FileResponse(
+            path=book_path,
+            media_type="application/epub+zip",
+            headers={
+                "Content-Disposition": "inline",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET",
+                "Access-Control-Allow-Headers": "Range, Content-Range, Accept-Ranges",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to serve book: {str(e)}")
+
+
+@app.get("/books/{filename}/content/{resource_path:path}")
+def serve_epub_resource(
+    filename: str,
+    resource_path: str,
+    book_manager: BookManager = Depends(get_book_manager)
+):
+    """Serve individual resources from EPUB (images, CSS, etc.)"""
+    try:
+        import zipfile
+        from fastapi.responses import Response
+        
+        book_path = book_manager.get_book_path(filename)
+        if not book_path:
+            raise HTTPException(status_code=404, detail="Book file not found")
+        
+        with zipfile.ZipFile(book_path, 'r') as epub_zip:
+            if resource_path not in epub_zip.namelist():
+                raise HTTPException(status_code=404, detail="Resource not found")
+            
+            resource_data = epub_zip.read(resource_path)
+            
+            # Determine content type based on file extension
+            content_type = "application/octet-stream"
+            if resource_path.lower().endswith(('.jpg', '.jpeg')):
+                content_type = "image/jpeg"
+            elif resource_path.lower().endswith('.png'):
+                content_type = "image/png"
+            elif resource_path.lower().endswith('.gif'):
+                content_type = "image/gif"
+            elif resource_path.lower().endswith('.css'):
+                content_type = "text/css"
+            elif resource_path.lower().endswith(('.html', '.xhtml')):
+                content_type = "application/xhtml+xml"
+            elif resource_path.lower().endswith('.js'):
+                content_type = "application/javascript"
+            
+            return Response(
+                content=resource_data,
+                media_type=content_type,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=3600"
+                }
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to serve resource: {str(e)}")
+
+
+@app.get("/books/{filename}/stream")
+def stream_epub(
+    filename: str,
+    request: Request,
+    book_manager: BookManager = Depends(get_book_manager)
+):
+    """Stream EPUB file with range support for better loading"""
+    try:
+        book_path = book_manager.get_book_path(filename)
+        if not book_path:
+            raise HTTPException(status_code=404, detail="Book file not found")
+        
+        file_size = os.path.getsize(book_path)
+        range_header = request.headers.get('Range')
+        
+        def generate_chunks(start: int = 0, end: int = file_size - 1):
+            with open(book_path, 'rb') as f:
+                f.seek(start)
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk_size = min(8192, remaining)  # 8KB chunks
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+        
+        if range_header:
+            # Handle range requests for partial content
+            range_match = range_header.replace('bytes=', '').split('-')
+            start = int(range_match[0]) if range_match[0] else 0
+            end = int(range_match[1]) if range_match[1] else file_size - 1
+            
+            content_length = end - start + 1
+            
+            return StreamingResponse(
+                generate_chunks(start, end),
+                status_code=206,
+                headers={
+                    'Content-Range': f'bytes {start}-{end}/{file_size}',
+                    'Accept-Ranges': 'bytes',
+                    'Content-Length': str(content_length),
+                    'Content-Type': 'application/epub+zip',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length'
+                }
+            )
+        else:
+            # Return full file
+            return StreamingResponse(
+                generate_chunks(),
+                headers={
+                    'Content-Length': str(file_size),
+                    'Content-Type': 'application/epub+zip',
+                    'Access-Control-Allow-Origin': '*',
+                    'Accept-Ranges': 'bytes'
+                }
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to stream book: {str(e)}")
+
+
+@app.post("/books/{filename}/open")
+async def open_book_with_system(filename: str, book_manager: BookManager = Depends(get_book_manager)):
+    """Open book with system default application."""
+    import subprocess
+    import platform
+    
+    try:
+        book_path = book_manager.get_book_path(filename)
+        if not book_path:
+            raise HTTPException(status_code=404, detail="Book not found")
+        
+        # Get the absolute path
+        abs_path = str(book_path.absolute())
+        
+        # Open with system default application
+        system = platform.system()
+        try:
+            if system == "Darwin":  # macOS
+                subprocess.run(["open", abs_path], check=True)
+            elif system == "Windows":
+                subprocess.run(["start", abs_path], shell=True, check=True)
+            else:  # Linux
+                subprocess.run(["xdg-open", abs_path], check=True)
+            
+            return {"success": True, "message": f"Opened {filename} with system default application"}
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open book: {str(e)}")

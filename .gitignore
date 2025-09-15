@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 *.egg-info/
 dev/
+german_books/
