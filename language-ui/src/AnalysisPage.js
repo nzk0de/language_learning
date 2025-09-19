@@ -1,4 +1,4 @@
-import { Search, BarChart3, ArrowRightLeft, Loader2, Volume2, VolumeX, Square, Eye } from 'lucide-react';
+import { Search, BarChart3, ArrowRightLeft, Loader2, Volume2, VolumeX, Square, Eye, Maximize2, X, Book } from 'lucide-react';
 import { useEffect, useState, useRef } from 'react';
 import ReadingViewModal from './components/ReadingViewModal';
 
@@ -63,6 +63,17 @@ const AnalysisPage = () => {
     youtubeOnly: false
   });
 
+  // Sentences modal state - new container modal
+  const [sentencesModal, setSentencesModal] = useState({
+    isOpen: false,
+    sentences: [],
+    selectedIndex: 0,
+    translations: {}, // Store translations by index
+    srcLang: '',
+    tgtLang: '',
+    title: 'Sentences'
+  });
+
   const API_BASE = 'http://localhost:8000';
   const speechSynthesis = useRef(window.speechSynthesis);
   
@@ -76,6 +87,54 @@ const AnalysisPage = () => {
     setTimeout(() => {
       setMessages(prev => ({ ...prev, [key]: null }));
     }, 3000);
+  };
+
+  // Helper function to get proper language code for speech synthesis
+  const getLanguageCode = (langCode) => {
+    const languageMap = {
+      'en': 'en-US',
+      'de': 'de-DE',
+      'es': 'es-ES', 
+      'fr': 'fr-FR',
+      'it': 'it-IT',
+      'pt': 'pt-BR',
+      'ru': 'ru-RU',
+      'ja': 'ja-JP',
+      'ko': 'ko-KR',
+      'zh-cn': 'zh-CN',
+      'zh-tw': 'zh-TW',
+      'ar': 'ar-SA',
+      'hi': 'hi-IN',
+      'tr': 'tr-TR',
+      'pl': 'pl-PL',
+      'nl': 'nl-NL',
+      'sv': 'sv-SE',
+      'da': 'da-DK',
+      'no': 'no-NO',
+      'fi': 'fi-FI',
+      'hu': 'hu-HU',
+      'cs': 'cs-CZ',
+      'sk': 'sk-SK',
+      'ro': 'ro-RO',
+      'bg': 'bg-BG',
+      'hr': 'hr-HR',
+      'sl': 'sl-SI',
+      'et': 'et-EE',
+      'lv': 'lv-LV',
+      'lt': 'lt-LT',
+      'el': 'el-GR',
+      'he': 'he-IL',
+      'th': 'th-TH',
+      'vi': 'vi-VN',
+      'id': 'id-ID',
+      'ms': 'ms-MY',
+      'tl': 'tl-PH',
+      'sw': 'sw-KE',
+      'ca': 'ca-ES',
+      'eu': 'eu-ES',
+      'gl': 'gl-ES'
+    };
+    return languageMap[langCode] || langCode;
   };
 
   // Initialize languages and POS tags
@@ -130,49 +189,64 @@ const AnalysisPage = () => {
   }, []);
 
   // Speech synthesis functions
-  const speak = (text, language) => {
-    if (speechState.isSpeaking && !speechState.isPaused) {
-      speechSynthesis.current.cancel();
-      setSpeechState({
-        isSpeaking: false,
-        currentText: '',
-        currentLang: '',
-        isPaused: false
-      });
-      return;
+  const speakText = (text, language) => {
+    if ('speechSynthesis' in window) {
+      // If currently speaking the same text, stop it
+      if (speechState.isSpeaking && speechState.currentText === text) {
+        stopSpeech();
+        return;
+      }
+      
+      // Stop any ongoing speech
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = getLanguageCode(language);
+      utterance.rate = 0.8;
+      utterance.pitch = 1;
+      
+      // Find a voice that matches the language
+      const voices = window.speechSynthesis.getVoices();
+      const voice = voices.find(v => v.lang.startsWith(language)) || voices.find(v => v.lang.startsWith('en'));
+      if (voice) {
+        utterance.voice = voice;
+      }
+      
+      // Set up event listeners
+      utterance.onstart = () => {
+        setSpeechState({
+          isSpeaking: true,
+          currentText: text,
+          currentLang: language,
+          isPaused: false
+        });
+      };
+      
+      utterance.onend = () => {
+        setSpeechState({
+          isSpeaking: false,
+          currentText: '',
+          currentLang: '',
+          isPaused: false
+        });
+      };
+      
+      utterance.onerror = () => {
+        setSpeechState({
+          isSpeaking: false,
+          currentText: '',
+          currentLang: '',
+          isPaused: false
+        });
+      };
+      
+      window.speechSynthesis.speak(utterance);
+    } else {
+      alert('Text-to-speech is not supported in your browser');
     }
-
-    if (speechState.isPaused && speechState.currentText === text && speechState.currentLang === language) {
-      speechSynthesis.current.resume();
-      setSpeechState(prev => ({ ...prev, isPaused: false }));
-      return;
-    }
-
-    speechSynthesis.current.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = language;
-    
-    utterance.onstart = () => {
-      setSpeechState({
-        isSpeaking: true,
-        currentText: text,
-        currentLang: language,
-        isPaused: false
-      });
-    };
-
-    utterance.onend = () => {
-      setSpeechState({
-        isSpeaking: false,
-        currentText: '',
-        currentLang: '',
-        isPaused: false
-      });
-    };
-
-    speechSynthesis.current.speak(utterance);
   };
+
+  const speak = speakText; // Alias for compatibility
 
   const pauseSpeech = () => {
     if (speechState.isSpeaking && !speechState.isPaused) {
@@ -182,13 +256,27 @@ const AnalysisPage = () => {
   };
 
   const stopSpeech = () => {
-    speechSynthesis.current.cancel();
-    setSpeechState({
-      isSpeaking: false,
-      currentText: '',
-      currentLang: '',
-      isPaused: false
-    });
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setSpeechState({
+        isSpeaking: false,
+        currentText: '',
+        currentLang: '',
+        isPaused: false
+      });
+    }
+  };
+
+  const pauseResumeSpeech = () => {
+    if ('speechSynthesis' in window) {
+      if (speechState.isPaused) {
+        window.speechSynthesis.resume();
+        setSpeechState(prev => ({ ...prev, isPaused: false }));
+      } else {
+        window.speechSynthesis.pause();
+        setSpeechState(prev => ({ ...prev, isPaused: true }));
+      }
+    }
   };
 
   // Reading view functions
@@ -220,64 +308,62 @@ const AnalysisPage = () => {
     });
   };
 
-  // Helper function for speech synthesis with proper language codes
-  const speakText = (text, language) => {
-    const getLanguageCode = (langCode) => {
-      const languageMap = {
-        'en': 'en-US',
-        'de': 'de-DE',
-        'es': 'es-ES', 
-        'fr': 'fr-FR',
-        'it': 'it-IT',
-        'pt': 'pt-BR',
-        'ru': 'ru-RU',
-        'ja': 'ja-JP',
-        'ko': 'ko-KR',
-        'zh-cn': 'zh-CN',
-        'zh-tw': 'zh-TW',
-        'ar': 'ar-SA',
-        'hi': 'hi-IN',
-        'tr': 'tr-TR',
-        'pl': 'pl-PL',
-        'nl': 'nl-NL',
-        'sv': 'sv-SE',
-        'da': 'da-DK',
-        'no': 'no-NO',
-        'fi': 'fi-FI',
-        'hu': 'hu-HU',
-        'cs': 'cs-CZ',
-        'sk': 'sk-SK',
-        'ro': 'ro-RO',
-        'bg': 'bg-BG',
-        'hr': 'hr-HR',
-        'sl': 'sl-SI',
-        'et': 'et-EE',
-        'lv': 'lv-LV',
-        'lt': 'lt-LT',
-        'el': 'el-GR',
-        'he': 'he-IL',
-        'th': 'th-TH',
-        'vi': 'vi-VN',
-        'id': 'id-ID',
-        'ms': 'ms-MY',
-        'tl': 'tl-PH',
-        'sw': 'sw-KE',
-        'ca': 'ca-ES',
-        'eu': 'eu-ES',
-        'gl': 'gl-ES'
-      };
-      return languageMap[langCode] || langCode;
-    };
-
-    speak(text, getLanguageCode(language));
+  // Sentences modal functions
+  const openSentencesModal = (sentences, selectedIndex = 0, srcLang, tgtLang, title = 'Sentences') => {
+    const processedSentences = sentences.map(sentence => 
+      typeof sentence === 'string' ? sentence : (sentence.sentence || String(sentence))
+    );
+    
+    setSentencesModal({
+      isOpen: true,
+      sentences: processedSentences,
+      selectedIndex,
+      translations: {},
+      srcLang,
+      tgtLang,
+      title
+    });
   };
 
-  const pauseResumeSpeech = () => {
-    if (speechState.isPaused) {
-      speechSynthesis.current.resume();
-      setSpeechState(prev => ({ ...prev, isPaused: false }));
-    } else {
-      pauseSpeech();
+  const closeSentencesModal = () => {
+    setSentencesModal({
+      isOpen: false,
+      sentences: [],
+      selectedIndex: 0,
+      translations: {},
+      srcLang: '',
+      tgtLang: '',
+      title: 'Sentences'
+    });
+  };
+
+  const translateSentence = async (index) => {
+    const sentence = sentencesModal.sentences[index];
+    if (!sentence || sentencesModal.translations[index]) return; // Already translated
+    
+    try {
+      const response = await fetch(`${API_BASE}/translate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: sentence,
+          src_lang: sentencesModal.srcLang,
+          tgt_lang: sentencesModal.tgtLang
+        })
+      });
+      const data = await response.json();
+      
+      if (data.translation) {
+        setSentencesModal(prev => ({
+          ...prev,
+          translations: {
+            ...prev.translations,
+            [index]: data.translation
+          }
+        }));
+      }
+    } catch (error) {
+      console.error('Translation failed:', error);
     }
   };
 
@@ -341,13 +427,9 @@ const AnalysisPage = () => {
       if (data.error) {
         setMessage('wordExamples', data.error, 'error');
       } else {
-        setWordExamples({
-          isOpen: true,
-          word: word,
-          examples: data.examples || [],
-          translation: data.translation || '',
-          language: learningLanguage
-        });
+        // Open sentences modal instead of word examples modal
+        const examples = data.examples || [];
+        openSentencesModal(examples, 0, learningLanguage, 'en', `Examples for "${word}"`);
       }
     } catch (error) {
       setMessage('wordExamples', 'Failed to load word examples', 'error');
@@ -365,7 +447,7 @@ const AnalysisPage = () => {
   };
 
   // Speech Button Component
-  const SpeechButton = ({ text, language, size = 'normal', className = '', colorScheme = 'blue' }) => {
+  const SpeechButton = ({ text, language, size = 'normal', className = '', colorScheme = 'blue', onClick = null }) => {
     if (!text) return null;
 
     const isCurrentlySpeaking = speechState.isSpeaking && speechState.currentText === text && speechState.currentLang === language;
@@ -395,7 +477,10 @@ const AnalysisPage = () => {
     return (
       <div className={`flex items-center gap-1 ${className}`}>
         <button
-          onClick={() => speak(text, language)}
+          onClick={(e) => {
+            if (onClick) onClick(e);
+            speak(text, language);
+          }}
           className={`${sizeClasses} ${colorClasses} rounded transition-colors ${className}`}
           title={isPausedForThis ? "Resume" : (isCurrentlySpeaking ? "Stop" : "Speak")}
         >
@@ -491,15 +576,19 @@ const AnalysisPage = () => {
                   const sentence = typeof example === 'string' ? example : (example.sentence || String(example));
                   
                   return (
-                    <div key={index} className="p-3 bg-gray-50 rounded-lg border-l-4 border-purple-500">
+                    <div key={index} className="p-3 bg-gray-50 rounded-lg border-l-4 border-purple-500 cursor-pointer hover:bg-gray-100 transition-colors"
+                         onClick={() => openSentencesModal([sentence], 0, wordExamples.language, 'en', `Examples for "${wordExamples.word}"`)}>
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-gray-700 flex-1">{sentence}</p>
-                        <SpeechButton 
-                          text={sentence} 
-                          language={wordExamples.language}
-                          size="normal"
-                          colorScheme="purple"
-                        />
+                        <p className="text-gray-700 flex-1 pr-2">{sentence}</p>
+                        <div className="flex gap-1">
+                          <SpeechButton 
+                            text={sentence} 
+                            language={wordExamples.language}
+                            size="normal"
+                            colorScheme="purple"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
                       </div>
                     </div>
                   );
@@ -512,10 +601,127 @@ const AnalysisPage = () => {
     );
   };
 
+  // Sentences Modal Component - New container modal for all sentences
+  const SentencesModal = () => {
+    if (!sentencesModal.isOpen) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
+          {/* Modal Header */}
+          <div className="flex items-center justify-between p-6 border-b border-gray-200">
+            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <Book className="w-6 h-6 text-indigo-600" />
+              {sentencesModal.title}
+            </h2>
+            <button
+              onClick={closeSentencesModal}
+              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          {/* Modal Content */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {sentencesModal.sentences.length === 0 ? (
+              <p className="text-gray-500 text-center py-8">No sentences found.</p>
+            ) : (
+              <div className="space-y-4">
+                {sentencesModal.sentences.map((sentence, index) => {
+                  const translation = sentencesModal.translations[index];
+                  const isTranslated = !!translation;
+                  
+                  return (
+                    <div key={index} className="border border-gray-200 rounded-lg overflow-hidden">
+                      {/* Original sentence */}
+                      <div className="p-4 bg-gray-50 flex items-start justify-between">
+                        <div className="flex-1 pr-4">
+                          <span className="text-xs text-gray-500 uppercase tracking-wide font-medium">
+                            Original ({sentencesModal.srcLang})
+                          </span>
+                          <p className="text-gray-800 mt-1 leading-relaxed">{sentence}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => translateSentence(index)}
+                            disabled={isTranslated}
+                            className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                              isTranslated 
+                                ? 'bg-green-100 text-green-700 cursor-default' 
+                                : 'bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-pointer'
+                            }`}
+                          >
+                            {isTranslated ? 'Translated' : 'Translate'}
+                          </button>
+                          <SpeechButton 
+                            text={sentence} 
+                            language={sentencesModal.srcLang}
+                            size="normal"
+                            colorScheme="indigo"
+                          />
+                        </div>
+                      </div>
+                      
+                      {/* Translation (if available) */}
+                      {isTranslated && (
+                        <div className="p-4 bg-blue-50 border-t border-gray-200 flex items-start justify-between">
+                          <div className="flex-1 pr-4">
+                            <span className="text-xs text-blue-600 uppercase tracking-wide font-medium">
+                              Translation ({sentencesModal.tgtLang})
+                            </span>
+                            <p className="text-blue-800 mt-1 leading-relaxed">{translation}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(translation);
+                                setMessage('general', 'Translation copied!', 'success');
+                              }}
+                              className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
+                              title="Copy translation"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                            </button>
+                            <SpeechButton 
+                              text={translation} 
+                              language={sentencesModal.tgtLang}
+                              size="normal"
+                              colorScheme="blue"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Modal Footer */}
+          <div className="p-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              💡 Click "Translate" on any sentence to see it side-by-side with the original
+            </div>
+            <button
+              onClick={closeSentencesModal}
+              className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50">
       <div className="max-w-6xl mx-auto px-4 py-8">
-        {/* Header */}
+        {/* Header */}  
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3 mb-4">
             <div className="p-3 bg-gradient-to-r from-purple-500 to-indigo-600 rounded-xl">
@@ -633,52 +839,29 @@ const AnalysisPage = () => {
                 Search & Translate
               </button>
 
-              {translateSearchResults && (
-                <div className="space-y-4">
-                  {translateSearchResults.translation && (
-                    <div className="bg-green-50 p-4 rounded-lg border-l-4 border-green-500">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="font-medium text-gray-800">
-                          Translation: <span className="text-green-700">{translateSearchResults.translation}</span>
-                        </h3>
-                        <SpeechButton 
-                          text={translateSearchResults.translation} 
-                          language={translateSearchTgt} 
-                          size="normal"
-                          colorScheme="green"
-                        />
+              {translateSearchResults && translateSearchResults.examples && translateSearchResults.examples.length > 0 && (
+                <div className="space-y-2 mt-4">
+                  <h3 className="font-medium text-gray-700">Examples:</h3>
+                  {translateSearchResults.examples.map((example, index) => {
+                    const sentence = typeof example === 'string' ? example : (example.sentence || String(example));
+                    return (
+                      <div key={index} className="p-3 bg-gray-50 rounded-lg border relative cursor-pointer hover:bg-gray-100 transition-colors"
+                           onClick={() => openSentencesModal(translateSearchResults.examples, index, learningLanguage, translateSearchTgt)}>
+                        <p className="text-gray-700 pr-16">{sentence}</p>
+                        <div className="absolute top-3 right-3 flex gap-1">
+                          <SpeechButton 
+                            text={sentence} 
+                            language={learningLanguage} 
+                            size="normal"
+                            className="rounded"
+                            colorScheme="indigo"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  )}
-
-                  {translateSearchResults.examples && translateSearchResults.examples.length > 0 && (
-                    <div className="bg-purple-50 p-4 rounded-lg border-l-4 border-purple-500">
-                      <h3 className="font-medium text-gray-800 mb-3">
-                        Examples from {learningLanguage.toUpperCase()} corpus ({translateSearchResults.examples.length} found):
-                      </h3>
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {translateSearchResults.examples.map((example, index) => {
-                          // Handle both string examples and object examples
-                          const sentence = typeof example === 'string' ? example : (example.sentence || String(example));
-                          
-                          return (
-                            <div key={index} className="flex items-start justify-between gap-2 p-2 bg-white rounded border">
-                              <p className="text-gray-700 text-sm flex-1">{sentence}</p>
-                              <SpeechButton 
-                                text={sentence} 
-                                language={learningLanguage} 
-                                size="normal"
-                                colorScheme="purple"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="text-xs text-gray-600 mt-2">
-                        💡 Searches for "{learningLanguage.toUpperCase()}" sentences in your corpus containing relevant words.
-                      </p>
-                    </div>
-                  )}
+                    );
+                  })}
+                  <p className="text-xs text-gray-500 mt-2">💡 Click any sentence to view all examples with translation options</p>
                 </div>
               )}
 
@@ -744,7 +927,7 @@ const AnalysisPage = () => {
                   <input
                     type="number"
                     value={startRank}
-                    onChange={(e) => setStartRank(Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={(e) => setStartRank(parseInt(e.target.value) || 1)}
                     min="1"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
@@ -755,8 +938,8 @@ const AnalysisPage = () => {
                   <input
                     type="number"
                     value={endRank}
-                    onChange={(e) => setEndRank(Math.max(startRank, parseInt(e.target.value) || startRank))}
-                    min={startRank}
+                    onChange={(e) => setEndRank(parseInt(e.target.value) || 20)}
+                    min="1"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   />
                 </div>
@@ -818,8 +1001,8 @@ const AnalysisPage = () => {
         </div>
       </div>
 
-      {/* Word Examples Modal */}
-      <WordExamplesModal />
+      {/* Sentences Modal - New container for all sentences with click-to-translate */}
+      <SentencesModal />
       
       {/* Reading View Modal */}
       <ReadingViewModal 

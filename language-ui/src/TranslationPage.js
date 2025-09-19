@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Languages, Loader2, Volume2, VolumeX, Square, Maximize2 } from 'lucide-react';
+import { ArrowRightLeft, Languages, Loader2, Volume2, VolumeX, Square, Maximize2, X, Book, Eye } from 'lucide-react';
 import { useEffect, useState, useRef } from 'react';
 import ReadingViewModal from './components/ReadingViewModal';
 
@@ -63,6 +63,181 @@ const TranslationPage = () => {
     setTimeout(() => {
       setMessages(prev => ({ ...prev, [key]: null }));
     }, 3000);
+  };
+
+  // Helper function to get proper language code for speech synthesis
+  const getLanguageCode = (langCode) => {
+    const languageMap = {
+      'en': 'en-US',
+      'de': 'de-DE',
+      'es': 'es-ES', 
+      'fr': 'fr-FR',
+      'it': 'it-IT',
+      'pt': 'pt-BR',
+      'ru': 'ru-RU',
+      'ja': 'ja-JP',
+      'ko': 'ko-KR',
+      'zh-cn': 'zh-CN',
+      'zh-tw': 'zh-TW',
+      'ar': 'ar-SA',
+      'hi': 'hi-IN',
+      'tr': 'tr-TR',
+      'pl': 'pl-PL',
+      'nl': 'nl-NL',
+      'sv': 'sv-SE',
+      'da': 'da-DK',
+      'no': 'no-NO',
+      'fi': 'fi-FI',
+      'hu': 'hu-HU',
+      'cs': 'cs-CZ',
+      'sk': 'sk-SK',
+      'ro': 'ro-RO',
+      'bg': 'bg-BG',
+      'hr': 'hr-HR',
+      'sl': 'sl-SI',
+      'et': 'et-EE',
+      'lv': 'lv-LV',
+      'lt': 'lt-LT',
+      'el': 'el-GR',
+      'he': 'he-IL',
+      'th': 'th-TH',
+      'vi': 'vi-VN',
+      'id': 'id-ID',
+      'ms': 'ms-MY',
+      'tl': 'tl-PH',
+      'sw': 'sw-KE',
+      'ca': 'ca-ES',
+      'eu': 'eu-ES',
+      'gl': 'gl-ES'
+    };
+    return languageMap[langCode] || langCode;
+  };
+
+  // Text-to-speech functionality
+  const speakText = (text, language) => {
+    if ('speechSynthesis' in window) {
+      // If currently speaking the same text, stop it
+      if (speechState.isSpeaking && speechState.currentText === text) {
+        stopSpeech();
+        return;
+      }
+      
+      // Stop any ongoing speech
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = getLanguageCode(language);
+      utterance.rate = 0.8;
+      utterance.pitch = 1;
+      
+      // Find a voice that matches the language
+      const voices = window.speechSynthesis.getVoices();
+      const voice = voices.find(v => v.lang.startsWith(language)) || voices.find(v => v.lang.startsWith('en'));
+      if (voice) {
+        utterance.voice = voice;
+      }
+      
+      // Set up event listeners
+      utterance.onstart = () => {
+        setSpeechState({
+          isSpeaking: true,
+          currentText: text,
+          currentLang: language,
+          isPaused: false
+        });
+      };
+      
+      utterance.onend = () => {
+        setSpeechState({
+          isSpeaking: false,
+          currentText: '',
+          currentLang: '',
+          isPaused: false
+        });
+      };
+      
+      utterance.onerror = () => {
+        setSpeechState({
+          isSpeaking: false,
+          currentText: '',
+          currentLang: '',
+          isPaused: false
+        });
+      };
+      
+      window.speechSynthesis.speak(utterance);
+    } else {
+      alert('Text-to-speech is not supported in your browser');
+    }
+  };
+
+  const stopSpeech = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setSpeechState({
+        isSpeaking: false,
+        currentText: '',
+        currentLang: '',
+        isPaused: false
+      });
+    }
+  };
+
+  const pauseResumeSpeech = () => {
+    if ('speechSynthesis' in window) {
+      if (speechState.isPaused) {
+        window.speechSynthesis.resume();
+        setSpeechState(prev => ({ ...prev, isPaused: false }));
+      } else {
+        window.speechSynthesis.pause();
+        setSpeechState(prev => ({ ...prev, isPaused: true }));
+      }
+    }
+  };
+
+  // Reading view functions
+  const openReadingView = (originalText, translatedText, srcLang, tgtLang, title = 'Reading View', youtubeVideoId = null, youtubeStartTime = null, youtubeOnly = false) => {
+    setReadingView({
+      isOpen: true,
+      originalText,
+      translatedText,
+      srcLang,
+      tgtLang,
+      title,
+      youtubeVideoId,
+      youtubeStartTime,
+      youtubeOnly
+    });
+  };
+
+  const closeReadingView = () => {
+    setReadingView({
+      isOpen: false,
+      originalText: '',
+      translatedText: '',
+      srcLang: 'en',
+      tgtLang: 'de',
+      title: 'Reading View',
+      youtubeVideoId: null,
+      youtubeStartTime: null,
+      youtubeOnly: false
+    });
+  };
+
+  // Helper function to extract YouTube video ID from URL
+  const extractYouTubeVideoId = (url) => {
+    if (!url) return null;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+  };
+
+  // Helper function to extract start time from YouTube URL
+  const extractYouTubeStartTime = (url) => {
+    if (!url) return null;
+    const regExp = /[?&]t=([^&]*)/;
+    const match = url.match(regExp);
+    return match ? match[1] : null;
   };
 
   // Initialize languages
@@ -172,16 +347,6 @@ const TranslationPage = () => {
     }
   };
 
-  const stopSpeech = () => {
-    speechSynthesis.current.cancel();
-    setSpeechState({
-      isSpeaking: false,
-      currentText: '',
-      currentLang: '',
-      isPaused: false
-    });
-  };
-
   // Translation functions
   const handleTranslate = async () => {
     if (!translationText.trim()) return;
@@ -218,108 +383,6 @@ const TranslationPage = () => {
     setSrcLang(newSrc);
     setTgtLang(newTgt);
     setTranslation('');
-  };
-
-  const openReadingView = (originalText, translatedText, srcLang, tgtLang, title = 'Reading View', youtubeVideoId = null, youtubeStartTime = null, youtubeOnly = false) => {
-    setReadingView({
-      isOpen: true,
-      originalText,
-      translatedText,
-      srcLang,
-      tgtLang,
-      title,
-      youtubeVideoId,
-      youtubeStartTime,
-      youtubeOnly
-    });
-  };
-
-  const closeReadingView = () => {
-    setReadingView({
-      isOpen: false,
-      originalText: '',
-      translatedText: '',
-      srcLang: 'en',
-      tgtLang: 'de',
-      title: 'Reading View',
-      youtubeVideoId: null,
-      youtubeStartTime: null,
-      youtubeOnly: false
-    });
-  };
-
-  // Helper function to get proper language code for speech synthesis
-  const getLanguageCode = (langCode) => {
-    const languageMap = {
-      'en': 'en-US',
-      'de': 'de-DE',
-      'es': 'es-ES', 
-      'fr': 'fr-FR',
-      'it': 'it-IT',
-      'pt': 'pt-BR',
-      'ru': 'ru-RU',
-      'ja': 'ja-JP',
-      'ko': 'ko-KR',
-      'zh-cn': 'zh-CN',
-      'zh-tw': 'zh-TW',
-      'ar': 'ar-SA',
-      'hi': 'hi-IN',
-      'tr': 'tr-TR',
-      'pl': 'pl-PL',
-      'nl': 'nl-NL',
-      'sv': 'sv-SE',
-      'da': 'da-DK',
-      'no': 'no-NO',
-      'fi': 'fi-FI',
-      'hu': 'hu-HU',
-      'cs': 'cs-CZ',
-      'sk': 'sk-SK',
-      'ro': 'ro-RO',
-      'bg': 'bg-BG',
-      'hr': 'hr-HR',
-      'sl': 'sl-SI',
-      'et': 'et-EE',
-      'lv': 'lv-LV',
-      'lt': 'lt-LT',
-      'el': 'el-GR',
-      'he': 'he-IL',
-      'th': 'th-TH',
-      'vi': 'vi-VN',
-      'id': 'id-ID',
-      'ms': 'ms-MY',
-      'tl': 'tl-PH',
-      'sw': 'sw-KE',
-      'ca': 'ca-ES',
-      'eu': 'eu-ES',
-      'gl': 'gl-ES'
-    };
-    return languageMap[langCode] || langCode;
-  };
-
-  // Wrapper for speech with proper language codes
-  const speakText = (text, language) => {
-    speak(text, getLanguageCode(language));
-  };
-
-  const pauseResumeSpeech = () => {
-    if (speechState.isPaused) {
-      speechSynthesis.current.resume();
-      setSpeechState(prev => ({ ...prev, isPaused: false }));
-    } else {
-      pauseSpeech();
-    }
-  };
-
-  // Helper function to extract YouTube video ID from URL
-  const extractYouTubeVideoId = (url) => {
-    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/);
-    return match ? match[1] : null;
-  };
-
-  // Helper function to extract start time from YouTube URL
-  const extractYouTubeStartTime = (url) => {
-    const match = url.match(/[?&]t=(\d+)/);
-    return match ? parseInt(match[1]) : null;
   };
 
   // Auto-fill YouTube inputs when translation text changes
