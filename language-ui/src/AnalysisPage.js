@@ -1,354 +1,169 @@
-import {
-  Search,
-  BarChart3,
-  ArrowRightLeft,
-  Loader2,
-  Volume2,
-  VolumeX,
-  Square,
-  Eye,
-  Maximize2,
-  X,
-  Book,
-} from "lucide-react";
-import { useEffect, useState, useRef } from "react";
-import ReadingViewModal from "./components/ReadingViewModal";
+import { useState, useMemo } from "react";
+import { BarChart3 } from "lucide-react";
+import { useSpeech } from "./hooks/useSpeech";
+import { useDataFetching } from "./hooks/useDataFetching";
+import { WordSearchSection } from "./components/analysis/WordSearchSection";
+import { WordFrequencySection } from "./components/analysis/WordFrequencySection";
+import { SentencesModal } from "./components/modals/SentencesModal";
+import ReadingViewModal from "./components/modals/ReadingViewModal";
+
+const API_BASE = "http://localhost:8000";
 
 const AnalysisPage = () => {
-  // State management
-  const [languages, setLanguages] = useState([]);
-  const [languageNames, setLanguageNames] = useState({});
-  const [translateSearchWord, setTranslateSearchWord] = useState("");
-  const [translateSearchSrc, setTranslateSearchSrc] = useState("en");
-  const [translateSearchTgt, setTranslateSearchTgt] = useState("de");
-  const [translateSearchResults, setTranslateSearchResults] = useState(null);
+  // --- Hooks ---
+  const speechProps = useSpeech();
+  const { data: languagesData, loading: languagesLoading } =
+    useDataFetching("/languages");
+  const { data: posTagsData, loading: posTagsLoading } =
+    useDataFetching("/pos_tags");
 
-  // Learning language - the language of your corpus that you're learning from
+  // --- Memoized Data ---
+  const languages = useMemo(
+    () => Object.keys(languagesData?.languages || {}),
+    [languagesData]
+  );
+  const languageNames = useMemo(
+    () => languagesData?.languages || {},
+    [languagesData]
+  );
+  const posTags = useMemo(() => posTagsData?.pos_tags || [], [posTagsData]);
+
+  // --- STATE GROUP 1: Word Search & Translation Section ---
   const [learningLanguage, setLearningLanguage] = useState("de");
-
-  // Word frequency state
-  const [posTags, setPosTags] = useState([]);
-  const [selectedPosTag, setSelectedPosTag] = useState("NOUN");
-  const [frequencyLang, setFrequencyLang] = useState("de");
-  const [startRank, setStartRank] = useState(1);
-  const [endRank, setEndRank] = useState(20);
-  const [wordFrequencyResults, setWordFrequencyResults] = useState(null);
-
-  // Loading states
-  const [loading, setLoading] = useState({
-    languages: false,
-    translateSearch: false,
-    wordFrequency: false,
-    posTags: false,
-  });
-
-  // Messages
-  const [messages, setMessages] = useState({});
-
-  // Speech state management
-  const [speechState, setSpeechState] = useState({
-    isSpeaking: false,
-    currentText: "",
-    currentLang: "",
-    isPaused: false,
-  });
-
-  // Word examples state
-  const [wordExamples, setWordExamples] = useState({
-    isOpen: false,
+  const [searchState, setSearchState] = useState({
     word: "",
-    examples: [],
-    translation: "",
-    language: "",
+    src: "en",
+    tgt: "de",
   });
+  const [searchResults, setSearchResults] = useState(null); // Results from the main search bar
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchMessage, setSearchMessage] = useState(null);
 
-  // Reading view modal state
-  const [readingView, setReadingView] = useState({
-    isOpen: false,
-    originalText: "",
-    translatedText: "",
-    srcLang: "",
-    tgtLang: "",
-    title: "Reading View",
-    youtubeVideoId: null,
-    youtubeStartTime: null,
-    youtubeOnly: false,
+  // --- STATE GROUP 2: Word Frequency Section ---
+  const [frequencyState, setFrequencyState] = useState({
+    lang: "de",
+    posTag: "NOUN",
+    startRank: 1,
+    endRank: 20,
   });
+  const [frequencyResults, setFrequencyResults] = useState(null); // The list of frequent words
+  const [frequencyLoading, setFrequencyLoading] = useState(false);
+  const [frequencyMessage, setFrequencyMessage] = useState(null);
 
-  // Sentences modal state - new container modal
+  // --- STATE GROUP 3: Word Click Examples (from Frequency Section) ---
+  // This state is now separate and will not affect the main search bar's results.
+  const [wordClickResults, setWordClickResults] = useState(null);
+  const [wordClickLoading, setWordClickLoading] = useState(false);
+  const [wordClickMessage, setWordClickMessage] = useState(null);
+
+  // --- STATE GROUP 4: Modals ---
   const [sentencesModal, setSentencesModal] = useState({
     isOpen: false,
     sentences: [],
-    selectedIndex: 0,
-    translations: {}, // Store translations by index
+    translations: {},
     srcLang: "",
     tgtLang: "",
-    title: "Sentences",
+    title: "",
   });
+  const [readingView, setReadingView] = useState({ isOpen: false });
 
-  const API_BASE = "http://localhost:8000";
-  const speechSynthesis = useRef(window.speechSynthesis);
+  // --- API & Modal Logic ---
 
-  // Utility functions
-  const setLoadingState = (key, value) => {
-    setLoading((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const setMessage = (key, message, type = "info") => {
-    setMessages((prev) => ({ ...prev, [key]: { message, type } }));
-    setTimeout(() => {
-      setMessages((prev) => ({ ...prev, [key]: null }));
-    }, 3000);
-  };
-
-  // Helper function to get proper language code for speech synthesis
-  const getLanguageCode = (langCode) => {
-    const languageMap = {
-      en: "en-US",
-      de: "de-DE",
-      es: "es-ES",
-      fr: "fr-FR",
-      it: "it-IT",
-      pt: "pt-BR",
-      ru: "ru-RU",
-      ja: "ja-JP",
-      ko: "ko-KR",
-      "zh-cn": "zh-CN",
-      "zh-tw": "zh-TW",
-      ar: "ar-SA",
-      hi: "hi-IN",
-      tr: "tr-TR",
-      pl: "pl-PL",
-      nl: "nl-NL",
-      sv: "sv-SE",
-      da: "da-DK",
-      no: "no-NO",
-      fi: "fi-FI",
-      hu: "hu-HU",
-      cs: "cs-CZ",
-      sk: "sk-SK",
-      ro: "ro-RO",
-      bg: "bg-BG",
-      hr: "hr-HR",
-      sl: "sl-SI",
-      et: "et-EE",
-      lv: "lv-LV",
-      lt: "lt-LT",
-      el: "el-GR",
-      he: "he-IL",
-      th: "th-TH",
-      vi: "vi-VN",
-      id: "id-ID",
-      ms: "ms-MY",
-      tl: "tl-PH",
-      sw: "sw-KE",
-      ca: "ca-ES",
-      eu: "eu-ES",
-      gl: "gl-ES",
-    };
-    return languageMap[langCode] || langCode;
-  };
-
-  // Initialize languages and POS tags
-  useEffect(() => {
-    const fetchLanguages = async () => {
-      setLoadingState("languages", true);
-      try {
-        const response = await fetch(`${API_BASE}/languages`);
-        const data = await response.json();
-        console.log("Languages API response:", data);
-        if (data.error) {
-          setMessage("general", data.error, "error");
-        } else {
-          // data.languages is a dictionary like {'en': 'English', 'de': 'German', ...}
-          const languageCodes = Object.keys(data.languages || {});
-          console.log("Language codes:", languageCodes);
-          setLanguages(languageCodes);
-          setLanguageNames(data.languages || {});
-        }
-      } catch (error) {
-        console.error("Languages API error:", error);
-        setMessage("general", "Failed to load languages", "error");
-        // Set empty arrays as fallback
-        setLanguages([]);
-        setLanguageNames({});
-      } finally {
-        setLoadingState("languages", false);
-      }
-    };
-
-    const fetchPosTags = async () => {
-      setLoadingState("posTags", true);
-      try {
-        const response = await fetch(`${API_BASE}/pos_tags`);
-        const data = await response.json();
-        if (data.error) {
-          setMessage("general", data.error, "error");
-        } else {
-          console.log("POS tags API response:", data);
-          console.log("POS tags data:", data.pos_tags);
-          setPosTags(data.pos_tags || []);
-        }
-      } catch (error) {
-        setMessage("general", "Failed to load POS tags", "error");
-      } finally {
-        setLoadingState("posTags", false);
-      }
-    };
-
-    fetchLanguages();
-    fetchPosTags();
-  }, []);
-
-  // Speech synthesis functions
-  const speakText = (text, language) => {
-    if ("speechSynthesis" in window) {
-      // If currently speaking the same text, stop it
-      if (speechState.isSpeaking && speechState.currentText === text) {
-        stopSpeech();
-        return;
-      }
-
-      // Stop any ongoing speech
-      window.speechSynthesis.cancel();
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = getLanguageCode(language);
-      utterance.rate = 0.8;
-      utterance.pitch = 1;
-
-      // Find a voice that matches the language
-      const voices = window.speechSynthesis.getVoices();
-      const voice =
-        voices.find((v) => v.lang.startsWith(language)) ||
-        voices.find((v) => v.lang.startsWith("en"));
-      if (voice) {
-        utterance.voice = voice;
-      }
-
-      // Set up event listeners
-      utterance.onstart = () => {
-        setSpeechState({
-          isSpeaking: true,
-          currentText: text,
-          currentLang: language,
-          isPaused: false,
-        });
-      };
-
-      utterance.onend = () => {
-        setSpeechState({
-          isSpeaking: false,
-          currentText: "",
-          currentLang: "",
-          isPaused: false,
-        });
-      };
-
-      utterance.onerror = () => {
-        setSpeechState({
-          isSpeaking: false,
-          currentText: "",
-          currentLang: "",
-          isPaused: false,
-        });
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } else {
-      alert("Text-to-speech is not supported in your browser");
-    }
-  };
-
-  const speak = speakText; // Alias for compatibility
-
-  const pauseSpeech = () => {
-    if (speechState.isSpeaking && !speechState.isPaused) {
-      speechSynthesis.current.pause();
-      setSpeechState((prev) => ({ ...prev, isPaused: true }));
-    }
-  };
-
-  const stopSpeech = () => {
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      setSpeechState({
-        isSpeaking: false,
-        currentText: "",
-        currentLang: "",
-        isPaused: false,
-      });
-    }
-  };
-
-  const pauseResumeSpeech = () => {
-    if ("speechSynthesis" in window) {
-      if (speechState.isPaused) {
-        window.speechSynthesis.resume();
-        setSpeechState((prev) => ({ ...prev, isPaused: false }));
-      } else {
-        window.speechSynthesis.pause();
-        setSpeechState((prev) => ({ ...prev, isPaused: true }));
-      }
-    }
-  };
-
-  // Reading view functions
-  const openReadingView = (
-    originalText,
-    translatedText,
-    srcLang,
-    tgtLang,
-    title = "Reading View",
-    youtubeVideoId = null,
-    youtubeStartTime = null,
-    youtubeOnly = false
+  // Generic API handler remains the same
+  const handleApiCall = async (
+    url,
+    setLoading,
+    setResults,
+    setMessage,
+    successMsgFn
   ) => {
-    setReadingView({
-      isOpen: true,
-      originalText,
-      translatedText,
-      srcLang,
-      tgtLang,
-      title,
-      youtubeVideoId,
-      youtubeStartTime,
-      youtubeOnly,
-    });
+    setLoading(true);
+    setMessage(null);
+    setResults(null);
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+      setResults(data);
+      if (setMessage && successMsgFn) {
+        setMessage({ message: successMsgFn(data), type: "success" });
+      }
+    } catch (error) {
+      if (setMessage) {
+        setMessage({ message: error.message, type: "error" });
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const closeReadingView = () => {
-    setReadingView({
-      isOpen: false,
-      originalText: "",
-      translatedText: "",
-      srcLang: "",
-      tgtLang: "",
-      title: "Reading View",
-      youtubeVideoId: null,
-      youtubeStartTime: null,
-      youtubeOnly: false,
-    });
-  };
-
-  // Sentences modal functions
-  const openSentencesModal = (
-    sentences,
-    selectedIndex = 0,
-    srcLang,
-    tgtLang,
-    title = "Sentences"
-  ) => {
-    const processedSentences = sentences.map((sentence) =>
-      typeof sentence === "string"
-        ? sentence
-        : sentence.sentence || String(sentence)
+  // Handler for the main search bar
+  const handleTranslateSearch = () => {
+    if (!searchState.word.trim()) return;
+    const url = `${API_BASE}/translate_search?word=${encodeURIComponent(
+      searchState.word
+    )}&src_lang=${searchState.src}&tgt_lang=${
+      searchState.tgt
+    }&corpus_lang=${learningLanguage}&limit=10`;
+    handleApiCall(
+      url,
+      setSearchLoading,
+      setSearchResults,
+      setSearchMessage,
+      (data) => `Found ${data.examples?.length || 0} examples.`
     );
+  };
 
+  // Handler for the frequency analysis button
+  const handleWordFrequency = () => {
+    const { lang, posTag, startRank, endRank } = frequencyState;
+    const url = `${API_BASE}/word_frequency/${posTag}?lang=${lang}&start_rank=${startRank}&end_rank=${endRank}`;
+    handleApiCall(
+      url,
+      setFrequencyLoading,
+      setFrequencyResults,
+      setFrequencyMessage,
+      (data) => `Loaded ${data.results?.length || 0} words.`
+    );
+  };
+
+  // *** UPDATED: Handler for clicking a word in the frequency list ***
+  const handleWordClick = (word) => {
+    const url = `${API_BASE}/translate_search?word=${encodeURIComponent(
+      word
+    )}&src_lang=${frequencyState.lang}&tgt_lang=en&corpus_lang=${
+      frequencyState.lang
+    }&limit=10`;
+
+    // This now uses its own dedicated state setters
+    handleApiCall(
+      url,
+      setWordClickLoading,
+      setWordClickResults,
+      setWordClickMessage,
+      (data) => {
+        if (data.examples?.length > 0) {
+          // Open the modal with the new, separate results
+          openSentencesModal(
+            data.examples,
+            0,
+            frequencyState.lang,
+            "en",
+            `Examples for "${word}"`
+          );
+        }
+        // Returning a message is optional here as it's not displayed anywhere, but good practice
+        return `Found ${data.examples?.length || 0} examples for "${word}".`;
+      }
+    );
+  };
+
+  // Modal functions remain the same, they are generic enough to handle any data source
+  const openSentencesModal = (sentences, idx, srcLang, tgtLang, title) => {
+    const processedSentences = sentences.map((s) => s.sentence || String(s));
     setSentencesModal({
       isOpen: true,
       sentences: processedSentences,
-      selectedIndex,
       translations: {},
       srcLang,
       tgtLang,
@@ -356,831 +171,96 @@ const AnalysisPage = () => {
     });
   };
 
-  const closeSentencesModal = () => {
-    setSentencesModal({
-      isOpen: false,
-      sentences: [],
-      selectedIndex: 0,
-      translations: {},
-      srcLang: "",
-      tgtLang: "",
-      title: "Sentences",
-    });
-  };
+  const closeSentencesModal = () =>
+    setSentencesModal((prev) => ({ ...prev, isOpen: false }));
 
-  const translateSentence = async (index) => {
-    const sentence = sentencesModal.sentences[index];
-    if (!sentence || sentencesModal.translations[index]) return; // Already translated
-
+  const translateSentenceInModal = async (index) => {
+    // This function is self-contained and needs no changes
+    const { sentences, translations, srcLang, tgtLang } = sentencesModal;
+    const sentenceToTranslate = sentences[index].replace(/<[^>]*>/g, "");
+    if (!sentenceToTranslate || translations[index]) return;
     try {
       const response = await fetch(`${API_BASE}/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: sentence,
-          src_lang: sentencesModal.srcLang,
-          tgt_lang: sentencesModal.tgtLang,
+          text: sentenceToTranslate,
+          src_lang: srcLang,
+          tgt_lang: tgtLang,
         }),
       });
       const data = await response.json();
-
       if (data.translation) {
         setSentencesModal((prev) => ({
           ...prev,
-          translations: {
-            ...prev.translations,
-            [index]: data.translation,
-          },
+          translations: { ...prev.translations, [index]: data.translation },
         }));
-      }
-    } catch (error) {
-      console.error("Translation failed:", error);
-    }
-  };
-
-  // Search and analysis functions
-  const handleTranslateSearch = async () => {
-    if (!translateSearchWord.trim()) return;
-
-    setLoadingState("translateSearch", true);
-    try {
-      // Enhanced search API call with proper corpus language
-      // - Always search corpus in learningLanguage
-      const response = await fetch(
-        `${API_BASE}/translate_search?word=${encodeURIComponent(
-          translateSearchWord
-        )}&src_lang=${translateSearchSrc}&tgt_lang=${translateSearchTgt}&corpus_lang=${learningLanguage}&limit=10`
-      );
-      const data = await response.json();
-
-      if (data.error) {
-        setMessage("translateSearch", data.error, "error");
       } else {
-        setTranslateSearchResults(data);
-        setMessage(
-          "translateSearch",
-          `Found ${
-            data.examples?.length || 0
-          } examples for "${translateSearchWord}"`,
-          "success"
-        );
+        throw new Error(data.error || "Translation failed");
       }
     } catch (error) {
-      setMessage("translateSearch", "Search failed", "error");
-    } finally {
-      setLoadingState("translateSearch", false);
+      console.error("Sentence translation failed:", error);
     }
-  };
-
-  const handleWordFrequency = async () => {
-    setLoadingState("wordFrequency", true);
-    try {
-      const response = await fetch(
-        `${API_BASE}/word_frequency/${selectedPosTag}?lang=${frequencyLang}&start_rank=${startRank}&end_rank=${endRank}`
-      );
-      const data = await response.json();
-      console.log("Word frequency API response:", data);
-
-      if (data.error) {
-        setMessage("wordFrequency", data.error, "error");
-      } else {
-        console.log("Word frequency data:", data);
-        setWordFrequencyResults(data);
-        setMessage(
-          "wordFrequency",
-          `Loaded ${data.results?.length || 0} words`,
-          "success"
-        );
-      }
-    } catch (error) {
-      setMessage(
-        "wordFrequency",
-        "Failed to load word frequency data",
-        "error"
-      );
-    } finally {
-      setLoadingState("wordFrequency", false);
-    }
-  };
-
-  const handleWordClick = async (word) => {
-    try {
-      // Use learningLanguage as source (corpus language) and English as target for translation
-      const response = await fetch(
-        `${API_BASE}/translate_search?word=${encodeURIComponent(
-          word
-        )}&src_lang=${learningLanguage}&tgt_lang=en&corpus_lang=${learningLanguage}&limit=10`
-      );
-      const data = await response.json();
-
-      if (data.error) {
-        setMessage("wordExamples", data.error, "error");
-      } else {
-        // Open sentences modal instead of word examples modal
-        const examples = data.examples || [];
-        openSentencesModal(
-          examples,
-          0,
-          learningLanguage,
-          "en",
-          `Examples for "${word}"`
-        );
-      }
-    } catch (error) {
-      setMessage("wordExamples", "Failed to load word examples", "error");
-    }
-  };
-
-  const closeWordExamples = () => {
-    setWordExamples({
-      isOpen: false,
-      word: "",
-      examples: [],
-      translation: "",
-      language: "",
-    });
-  };
-
-  // Speech Button Component
-  const SpeechButton = ({
-    text,
-    language,
-    size = "normal",
-    className = "",
-    colorScheme = "blue",
-    onClick = null,
-  }) => {
-    if (!text) return null;
-
-    const isCurrentlySpeaking =
-      speechState.isSpeaking &&
-      speechState.currentText === text &&
-      speechState.currentLang === language;
-    const isPausedForThis =
-      speechState.isPaused &&
-      speechState.currentText === text &&
-      speechState.currentLang === language;
-
-    const sizeClasses = size === "large" ? "p-3" : "p-2";
-    const iconClasses = size === "large" ? "w-6 h-6" : "w-4 h-4";
-
-    let colorClasses = "";
-    switch (colorScheme) {
-      case "green":
-        colorClasses = isCurrentlySpeaking
-          ? "text-green-600 bg-green-100 hover:bg-green-200"
-          : "text-green-500 hover:text-green-600 hover:bg-green-50";
-        break;
-      case "purple":
-        colorClasses = isCurrentlySpeaking
-          ? "text-purple-600 bg-purple-100 hover:bg-purple-200"
-          : "text-purple-500 hover:text-purple-600 hover:bg-purple-50";
-        break;
-      default: // blue
-        colorClasses = isCurrentlySpeaking
-          ? "text-blue-600 bg-blue-100 hover:bg-blue-200"
-          : "text-blue-500 hover:text-blue-600 hover:bg-blue-50";
-    }
-
-    return (
-      <div className={`flex items-center gap-1 ${className}`}>
-        <button
-          onClick={(e) => {
-            if (onClick) onClick(e);
-            speak(text, language);
-          }}
-          className={`${sizeClasses} ${colorClasses} rounded transition-colors ${className}`}
-          title={
-            isPausedForThis ? "Resume" : isCurrentlySpeaking ? "Stop" : "Speak"
-          }
-        >
-          {isPausedForThis ? (
-            <Volume2 className={iconClasses} />
-          ) : isCurrentlySpeaking ? (
-            <VolumeX className={iconClasses} />
-          ) : (
-            <Volume2 className={iconClasses} />
-          )}
-        </button>
-        {isCurrentlySpeaking && !isPausedForThis && (
-          <>
-            <button
-              onClick={pauseSpeech}
-              className={`${sizeClasses} text-yellow-500 hover:text-yellow-600 hover:bg-yellow-50 rounded transition-colors`}
-              title="Pause"
-            >
-              <Square className={iconClasses} />
-            </button>
-            <button
-              onClick={stopSpeech}
-              className={`${sizeClasses} text-red-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors`}
-              title="Stop"
-            >
-              <VolumeX className={iconClasses} />
-            </button>
-          </>
-        )}
-      </div>
-    );
-  };
-
-  // Message Display Component
-  const MessageDisplay = ({ messageKey }) => {
-    const message = messages[messageKey];
-    if (!message) return null;
-
-    const bgColor = {
-      success: "bg-green-100 border-green-400 text-green-700",
-      error: "bg-red-100 border-red-400 text-red-700",
-      info: "bg-blue-100 border-blue-400 text-blue-700",
-    }[message.type];
-
-    return (
-      <div className={`p-3 rounded border ${bgColor}`}>{message.message}</div>
-    );
-  };
-
-  // Word Examples Modal Component
-  const WordExamplesModal = () => {
-    if (!wordExamples.isOpen) return null;
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col">
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-semibold text-gray-800">
-                Examples for "{wordExamples.word}"
-              </h2>
-              {wordExamples.translation && (
-                <span className="text-sm text-gray-600 bg-gray-100 px-2 py-1 rounded">
-                  {wordExamples.translation}
-                </span>
-              )}
-              <SpeechButton
-                text={wordExamples.word}
-                language={wordExamples.language}
-                size="normal"
-                colorScheme="purple"
-              />
-            </div>
-            <button
-              onClick={closeWordExamples}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              ×
-            </button>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 p-4 overflow-auto">
-            {wordExamples.examples.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">
-                No examples found for this word.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {wordExamples.examples.map((example, index) => {
-                  // Handle both string examples and object examples
-                  const sentence =
-                    typeof example === "string"
-                      ? example
-                      : example.sentence || String(example);
-
-                  return (
-                    <div
-                      key={index}
-                      className="p-3 bg-gray-50 rounded-lg border-l-4 border-purple-500 cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() =>
-                        openSentencesModal(
-                          [sentence],
-                          0,
-                          wordExamples.language,
-                          "en",
-                          `Examples for "${wordExamples.word}"`
-                        )
-                      }
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-gray-700 flex-1 pr-2">{sentence}</p>
-                        <div className="flex gap-1">
-                          <SpeechButton
-                            text={sentence}
-                            language={wordExamples.language}
-                            size="normal"
-                            colorScheme="purple"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Sentences Modal Component - New container modal for all sentences
-  const SentencesModal = () => {
-    if (!sentencesModal.isOpen) return null;
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
-          {/* Modal Header */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <Book className="w-6 h-6 text-indigo-600" />
-              {sentencesModal.title}
-            </h2>
-            <button
-              onClick={closeSentencesModal}
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-
-          {/* Modal Content */}
-          <div className="flex-1 overflow-y-auto p-6">
-            {sentencesModal.sentences.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">
-                No sentences found.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {sentencesModal.sentences.map((sentence, index) => {
-                  const translation = sentencesModal.translations[index];
-                  const isTranslated = !!translation;
-
-                  return (
-                    <div
-                      key={index}
-                      className="border border-gray-200 rounded-lg overflow-hidden"
-                    >
-                      <div className="p-4 bg-gray-50 flex items-start justify-between">
-                        <div className="flex-1 pr-4">
-                          <span className="text-xs text-gray-500 uppercase tracking-wide font-medium">
-                            Original ({sentencesModal.srcLang})
-                          </span>
-                          <div
-                            className="text-gray-800 mt-1 leading-relaxed"
-                            dangerouslySetInnerHTML={{ __html: sentence }}
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => translateSentence(index)}
-                            disabled={isTranslated}
-                            className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                              isTranslated
-                                ? "bg-green-100 text-green-700 cursor-default"
-                                : "bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-pointer"
-                            }`}
-                          >
-                            {isTranslated ? "Translated" : "Translate"}
-                          </button>
-                          <SpeechButton
-                            text={sentence.replace(/<[^>]*>/g, "")}
-                            language={sentencesModal.srcLang}
-                            size="normal"
-                            colorScheme="indigo"
-                          />
-                        </div>
-                      </div>
-                      {isTranslated && (
-                        <div className="p-4 bg-blue-50 border-t border-gray-200 flex items-start justify-between">
-                          <div className="flex-1 pr-4">
-                            <span className="text-xs text-blue-600 uppercase tracking-wide font-medium">
-                              Translation ({sentencesModal.tgtLang})
-                            </span>
-                            <div
-                              className="text-blue-800 mt-1 leading-relaxed"
-                              dangerouslySetInnerHTML={{ __html: translation }}
-                            />
-                          </div>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(translation);
-                                setMessage(
-                                  "general",
-                                  "Translation copied!",
-                                  "success"
-                                );
-                              }}
-                              className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-100 rounded transition-colors"
-                              title="Copy translation"
-                            >
-                              <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="2"
-                                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                                />
-                              </svg>
-                            </button>
-                            <SpeechButton
-                              text={translation}
-                              language={sentencesModal.tgtLang}
-                              size="normal"
-                              colorScheme="blue"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Modal Footer */}
-          <div className="p-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-            <div className="text-sm text-gray-600">
-              💡 Click "Translate" on any sentence to see it side-by-side with
-              the original
-            </div>
-            <button
-              onClick={closeSentencesModal}
-              className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    );
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50">
       <div className="max-w-6xl mx-auto px-4 py-8">
-        {/* Header */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-3 bg-gradient-to-r from-purple-500 to-indigo-600 rounded-xl">
-              <BarChart3 className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">
-              Analysis & Research
-            </h1>
-          </div>
-          <p className="text-gray-600">
-            Search for words, analyze frequency, and explore your learning
-            corpus
-          </p>
+          <h1 className="text-3xl font-bold">Analysis & Research</h1>
+          <p className="text-gray-600">Explore your learning corpus</p>
         </div>
-
-        {/* Content Grid */}
         <div className="space-y-6">
-          {/* Word Search & Translation Section */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Search className="w-5 h-5" />
-              Word Search & Translation
-            </h2>
+          <WordSearchSection
+            searchState={searchState}
+            setSearchState={setSearchState}
+            learningLanguage={learningLanguage}
+            setLearningLanguage={setLearningLanguage}
+            languages={languages}
+            languageNames={languageNames}
+            loading={searchLoading || languagesLoading}
+            onSearch={handleTranslateSearch}
+            searchResults={searchResults} // This section only cares about its own results
+            onOpenSentences={(sentences, idx) =>
+              openSentencesModal(
+                sentences,
+                idx,
+                learningLanguage,
+                searchState.tgt,
+                `Examples for "${searchState.word}"`
+              )
+            }
+            speechProps={speechProps}
+            message={searchMessage}
+          />
 
-            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-sm text-blue-700">
-                💡 <strong>Smart Search:</strong> Enter any word, get
-                translation, and find examples from your{" "}
-                {learningLanguage.toUpperCase()} corpus!
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              {/* Learning Language Selector */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Learning Language (Corpus):
-                </label>
-                <select
-                  value={learningLanguage}
-                  onChange={(e) => setLearningLanguage(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-purple-50"
-                  disabled={loading.languages}
-                >
-                  {(languages || []).map((lang) => (
-                    <option key={lang} value={lang}>
-                      {lang} - {languageNames[lang] || lang}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-600 mt-1">
-                  This is the language of your corpus that you're learning from
-                </p>
-              </div>
-
-              <input
-                type="text"
-                value={translateSearchWord}
-                onChange={(e) => setTranslateSearchWord(e.target.value)}
-                placeholder="Enter any word to translate and find examples..."
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                onKeyPress={(e) => e.key === "Enter" && handleTranslateSearch()}
-              />
-
-              <div className="flex items-end gap-2">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    From:
-                  </label>
-                  <select
-                    value={translateSearchSrc}
-                    onChange={(e) => setTranslateSearchSrc(e.target.value)}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    disabled={loading.languages}
-                  >
-                    {(languages || []).map((lang) => (
-                      <option key={lang} value={lang}>
-                        {lang} - {languageNames[lang] || lang}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <button
-                  onClick={() => {
-                    const newSrc = translateSearchTgt;
-                    const newTgt = translateSearchSrc;
-                    setTranslateSearchSrc(newSrc);
-                    setTranslateSearchTgt(newTgt);
-                    // Clear previous results when swapping
-                    setTranslateSearchResults(null);
-                  }}
-                  className="p-3 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors mb-0"
-                  title="Swap languages"
-                >
-                  <ArrowRightLeft className="w-5 h-5" />
-                </button>
-
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    To:
-                  </label>
-                  <select
-                    value={translateSearchTgt}
-                    onChange={(e) => setTranslateSearchTgt(e.target.value)}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    disabled={loading.languages}
-                  >
-                    {(languages || []).map((lang) => (
-                      <option key={lang} value={lang}>
-                        {lang} - {languageNames[lang] || lang}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <button
-                onClick={handleTranslateSearch}
-                disabled={
-                  loading.translateSearch || !translateSearchWord.trim()
-                }
-                className="w-full bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
-              >
-                {loading.translateSearch ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Search className="w-5 h-5" />
-                )}
-                Search & Translate
-              </button>
-
-              {translateSearchResults &&
-                translateSearchResults.examples &&
-                translateSearchResults.examples.length > 0 && (
-                  <div className="space-y-2 mt-4">
-                    <h3 className="font-medium text-gray-700">Examples:</h3>
-                    {translateSearchResults.examples.map((example, index) => {
-                      const sentence =
-                        typeof example === "string"
-                          ? example
-                          : example.sentence || String(example);
-                      return (
-                        <div
-                          key={index}
-                          className="p-3 bg-gray-50 rounded-lg border relative cursor-pointer hover:bg-gray-100 transition-colors"
-                          onClick={() =>
-                            openSentencesModal(
-                              translateSearchResults.examples,
-                              index,
-                              learningLanguage,
-                              translateSearchTgt
-                            )
-                          }
-                        >
-                          <p className="text-gray-700 pr-16">{sentence}</p>
-                          <div className="absolute top-3 right-3 flex gap-1">
-                            <SpeechButton
-                              text={sentence}
-                              language={learningLanguage}
-                              size="normal"
-                              className="rounded"
-                              colorScheme="indigo"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <p className="text-xs text-gray-500 mt-2">
-                      💡 Click any sentence to view all examples with
-                      translation options
-                    </p>
-                  </div>
-                )}
-
-              <MessageDisplay messageKey="translateSearch" />
-            </div>
-          </div>
-
-          {/* Word Frequency Analysis Section */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <BarChart3 className="w-5 h-5" />
-              Word Frequency Analysis
-            </h2>
-
-            <div className="mb-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
-              <p className="text-sm text-amber-700">
-                <strong>How it works:</strong> Analyzes the most frequent words
-                by part of speech (POS) in your corpus. Click any word to see
-                examples and translations!
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Language:
-                  </label>
-                  <select
-                    value={frequencyLang}
-                    onChange={(e) => setFrequencyLang(e.target.value)}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    disabled={loading.languages}
-                  >
-                    {(languages || []).map((lang) => (
-                      <option key={lang} value={lang}>
-                        {lang} - {languageNames[lang] || lang}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Part of Speech:
-                  </label>
-                  <select
-                    value={selectedPosTag}
-                    onChange={(e) => setSelectedPosTag(e.target.value)}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    disabled={loading.posTags}
-                  >
-                    {(posTags || []).map((tagData, index) => {
-                      // Handle both string tags and object tags
-                      const tag =
-                        typeof tagData === "string" ? tagData : tagData.pos_tag;
-                      const description =
-                        typeof tagData === "object" ? tagData.description : "";
-                      const displayText = description
-                        ? `${tag} - ${description}`
-                        : tag;
-
-                      return (
-                        <option key={index} value={tag}>
-                          {displayText}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Start Rank:
-                  </label>
-                  <input
-                    type="text"
-                    inputmode="numeric"
-                    // pattern="[0-9]*"
-                    placeholder="Enter number"
-                    value={startRank}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setStartRank(val === "" ? "" : parseInt(val, 10));
-                    }}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    End Rank:
-                  </label>
-                  <input
-                    type="text"
-                    inputmode="numeric"
-                    pattern="[0-9]*"
-                    placeholder="Enter number"
-                    value={endRank}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setEndRank(val === "" ? "" : parseInt(val, 10));
-                    }}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-
-              <button
-                onClick={handleWordFrequency}
-                disabled={loading.wordFrequency}
-                className="w-full bg-orange-600 text-white py-3 rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
-              >
-                {loading.wordFrequency ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <BarChart3 className="w-5 h-5" />
-                )}
-                Analyze Word Frequency
-              </button>
-
-              {wordFrequencyResults && (
-                <div className="bg-orange-50 p-4 rounded-lg border-l-4 border-orange-500">
-                  <h3 className="font-medium text-gray-800 mb-3">
-                    Most Frequent {selectedPosTag} Words (Ranks {startRank}-
-                    {endRank}):
-                  </h3>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                    {wordFrequencyResults.results?.map((wordData, index) => {
-                      // Use the correct properties from the API response
-                      const word =
-                        wordData.word || wordData.lemma || String(wordData);
-                      const count = wordData.count || "N/A";
-                      const rank = wordData.rank || startRank + index;
-
-                      return (
-                        <button
-                          key={index}
-                          onClick={() => handleWordClick(word)}
-                          className="flex items-center justify-between p-2 bg-white rounded border hover:bg-orange-100 hover:border-orange-300 transition-colors text-left group"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-gray-800 truncate block">
-                              {word}
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              #{rank} • {count} times
-                            </span>
-                          </div>
-                          <Eye className="w-4 h-4 text-gray-400 group-hover:text-orange-600 flex-shrink-0" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="text-xs text-gray-600 mt-3">
-                    💡 Click any word to see example sentences and get
-                    translations!
-                  </p>
-                </div>
-              )}
-
-              <MessageDisplay messageKey="wordFrequency" />
-            </div>
-          </div>
+          <WordFrequencySection
+            frequencyState={frequencyState}
+            setFrequencyState={setFrequencyState}
+            languages={languages}
+            languageNames={languageNames}
+            posTags={posTags}
+            onAnalyze={handleWordFrequency}
+            onWordClick={handleWordClick}
+            results={frequencyResults?.results}
+            message={frequencyMessage}
+            loading={frequencyLoading || posTagsLoading || wordClickLoading} // Show loading if fetching examples
+          />
         </div>
       </div>
 
-      {/* Sentences Modal - New container for all sentences with click-to-translate */}
-      <SentencesModal />
+      <SentencesModal
+        modalState={sentencesModal}
+        closeModal={closeSentencesModal}
+        onTranslate={translateSentenceInModal}
+        speechProps={speechProps}
+      />
 
-      {/* Reading View Modal */}
       <ReadingViewModal
         readingView={readingView}
-        closeReadingView={closeReadingView}
+        closeReadingView={() => setReadingView({ isOpen: false })}
         languageNames={languageNames}
-        speechState={speechState}
-        speakText={speakText}
-        stopSpeech={stopSpeech}
-        pauseResumeSpeech={pauseResumeSpeech}
+        {...speechProps}
       />
     </div>
   );
