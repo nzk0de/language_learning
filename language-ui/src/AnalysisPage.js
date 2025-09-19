@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { BarChart3 } from "lucide-react";
 import { useSpeech } from "./hooks/useSpeech";
 import { useDataFetching } from "./hooks/useDataFetching";
 import { WordSearchSection } from "./components/analysis/WordSearchSection";
@@ -28,35 +27,30 @@ const AnalysisPage = () => {
   );
   const posTags = useMemo(() => posTagsData?.pos_tags || [], [posTagsData]);
 
-  // --- STATE GROUP 1: Word Search & Translation Section ---
+  // --- State for UI components ---
   const [learningLanguage, setLearningLanguage] = useState("de");
   const [searchState, setSearchState] = useState({
     word: "",
     src: "en",
     tgt: "de",
   });
-  const [searchResults, setSearchResults] = useState(null); // Results from the main search bar
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchMessage, setSearchMessage] = useState(null);
-
-  // --- STATE GROUP 2: Word Frequency Section ---
   const [frequencyState, setFrequencyState] = useState({
     lang: "de",
     posTag: "NOUN",
     startRank: 1,
     endRank: 20,
   });
-  const [frequencyResults, setFrequencyResults] = useState(null); // The list of frequent words
+
+  // --- State for API responses and loading ---
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchMessage, setSearchMessage] = useState(null);
+
+  const [frequencyResults, setFrequencyResults] = useState(null);
   const [frequencyLoading, setFrequencyLoading] = useState(false);
   const [frequencyMessage, setFrequencyMessage] = useState(null);
 
-  // --- STATE GROUP 3: Word Click Examples (from Frequency Section) ---
-  // This state is now separate and will not affect the main search bar's results.
-  const [wordClickResults, setWordClickResults] = useState(null);
-  const [wordClickLoading, setWordClickLoading] = useState(false);
-  const [wordClickMessage, setWordClickMessage] = useState(null);
-
-  // --- STATE GROUP 4: Modals ---
+  // --- State specifically for the Sentences Modal ---
   const [sentencesModal, setSentencesModal] = useState({
     isOpen: false,
     sentences: [],
@@ -65,100 +59,190 @@ const AnalysisPage = () => {
     tgtLang: "",
     title: "",
   });
+  const [modalTranslatedWord, setModalTranslatedWord] = useState(null);
+  const [modalWordLoading, setModalWordLoading] = useState(false);
+
+  // --- Reading View Modal State ---
   const [readingView, setReadingView] = useState({ isOpen: false });
 
-  // --- API & Modal Logic ---
+  // --- Main Search Handler (Progressive Enhancement Pattern) ---
+  const handleTranslateSearch = async () => {
+    if (!searchState.word.trim()) return;
 
-  // Generic API handler remains the same
-  const handleApiCall = async (
-    url,
-    setLoading,
-    setResults,
-    setMessage,
-    successMsgFn
-  ) => {
-    setLoading(true);
-    setMessage(null);
-    setResults(null);
+    // Reset states for a new search
+    setSearchLoading(true);
+    setModalWordLoading(true);
+    setSearchMessage(null);
+    setSearchResults(null);
+    setModalTranslatedWord(null);
+
+    const { word, src, tgt } = searchState;
+    let wordToSearchInCorpus = word;
+
+    // Step 1: Determine the correct word to search for in the corpus.
+    // If the source language isn't the corpus language, we must translate first.
+    // This is a necessary sequential step before parallel fetching can begin.
+    if (src !== learningLanguage) {
+      try {
+        const url = `${API_BASE}/translate/word?word=${encodeURIComponent(
+          word
+        )}&src_lang=${src}&tgt_lang=${learningLanguage}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok)
+          throw new Error(data.detail || "Translation for search failed");
+        wordToSearchInCorpus = data.translated_word;
+      } catch (error) {
+        setSearchMessage({
+          message: `Could not translate "${word}" to ${learningLanguage.toUpperCase()} to perform search: ${
+            error.message
+          }`,
+          type: "error",
+        });
+        setSearchLoading(false);
+        setModalWordLoading(false);
+        return;
+      }
+    }
+
+    // Step 2: Now that we have the correct search term, run fetches in parallel.
+    const fetchExamplesPromise = fetch(
+      `${API_BASE}/search/examples?word=${encodeURIComponent(
+        wordToSearchInCorpus
+      )}&corpus_lang=${learningLanguage}&limit=10`
+    );
+    const translateWordPromise =
+      src === tgt
+        ? Promise.resolve(null)
+        : fetch(
+            `${API_BASE}/translate/word?word=${encodeURIComponent(
+              word
+            )}&src_lang=${src}&tgt_lang=${tgt}`
+          );
+
     try {
-      const response = await fetch(url);
-      const data = await response.json();
-      if (data.error) throw new Error(data.error);
-      setResults(data);
-      if (setMessage && successMsgFn) {
-        setMessage({ message: successMsgFn(data), type: "success" });
+      const [examplesResponse, translationResponse] = await Promise.all([
+        fetchExamplesPromise,
+        translateWordPromise,
+      ]);
+
+      // Process examples response (fast part)
+      const examplesData = await examplesResponse.json();
+      if (!examplesResponse.ok)
+        throw new Error(examplesData.detail || "Failed to fetch examples.");
+
+      setSearchResults(examplesData);
+      if (examplesData.examples?.length > 0) {
+        openSentencesModal(
+          examplesData.examples,
+          0,
+          learningLanguage,
+          tgt,
+          `Examples for "${word}"`
+        );
+      } else {
+        setSearchMessage({
+          message: `No examples found for "${wordToSearchInCorpus}" in your corpus.`,
+          type: "info",
+        });
+      }
+
+      // Process translation response (slow part)
+      if (translationResponse) {
+        // Will be null if src === tgt
+        const translationData = await translationResponse.json();
+        if (!translationResponse.ok)
+          throw new Error(
+            translationData.detail || "Failed to translate word."
+          );
+        setModalTranslatedWord(translationData.translated_word);
+      } else {
+        setModalTranslatedWord(word); // If no translation needed, use original word
       }
     } catch (error) {
-      if (setMessage) {
-        setMessage({ message: error.message, type: "error" });
-      }
+      setSearchMessage({ message: error.message, type: "error" });
     } finally {
-      setLoading(false);
+      setSearchLoading(false);
+      setModalWordLoading(false);
     }
   };
 
-  // Handler for the main search bar
-  const handleTranslateSearch = () => {
-    if (!searchState.word.trim()) return;
-    const url = `${API_BASE}/translate_search?word=${encodeURIComponent(
-      searchState.word
-    )}&src_lang=${searchState.src}&tgt_lang=${
-      searchState.tgt
-    }&corpus_lang=${learningLanguage}&limit=10`;
-    handleApiCall(
-      url,
-      setSearchLoading,
-      setSearchResults,
-      setSearchMessage,
-      (data) => `Found ${data.examples?.length || 0} examples.`
-    );
+  // --- Other Handlers ---
+  const handleWordFrequency = async () => {
+    setFrequencyLoading(true);
+    setFrequencyMessage(null);
+    try {
+      const { lang, posTag, startRank, endRank } = frequencyState;
+      const url = `${API_BASE}/word_frequency/${posTag}?lang=${lang}&start_rank=${startRank}&end_rank=${endRank}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(data.detail || "Failed to fetch frequency data.");
+      setFrequencyResults(data);
+      setFrequencyMessage({
+        message: `Loaded ${data.results?.length || 0} words.`,
+        type: "success",
+      });
+    } catch (error) {
+      setFrequencyMessage({ message: error.message, type: "error" });
+    } finally {
+      setFrequencyLoading(false);
+    }
   };
 
-  // Handler for the frequency analysis button
-  const handleWordFrequency = () => {
-    const { lang, posTag, startRank, endRank } = frequencyState;
-    const url = `${API_BASE}/word_frequency/${posTag}?lang=${lang}&start_rank=${startRank}&end_rank=${endRank}`;
-    handleApiCall(
-      url,
-      setFrequencyLoading,
-      setFrequencyResults,
-      setFrequencyMessage,
-      (data) => `Loaded ${data.results?.length || 0} words.`
+  const handleWordClick = async (clickedWord) => {
+    setModalWordLoading(true); // Re-use modal loading indicator
+    setModalTranslatedWord(null);
+
+    const { lang } = frequencyState;
+
+    // Use the same parallel fetch pattern
+    const fetchExamplesPromise = fetch(
+      `${API_BASE}/search/examples?word=${encodeURIComponent(
+        clickedWord
+      )}&corpus_lang=${lang}&limit=10`
     );
-  };
+    const translateWordPromise = fetch(
+      `${API_BASE}/translate/word?word=${encodeURIComponent(
+        clickedWord
+      )}&src_lang=${lang}&tgt_lang=en`
+    );
 
-  // *** UPDATED: Handler for clicking a word in the frequency list ***
-  const handleWordClick = (word) => {
-    const url = `${API_BASE}/translate_search?word=${encodeURIComponent(
-      word
-    )}&src_lang=${frequencyState.lang}&tgt_lang=en&corpus_lang=${
-      frequencyState.lang
-    }&limit=10`;
+    try {
+      const [examplesResponse, translationResponse] = await Promise.all([
+        fetchExamplesPromise,
+        translateWordPromise,
+      ]);
 
-    // This now uses its own dedicated state setters
-    handleApiCall(
-      url,
-      setWordClickLoading,
-      setWordClickResults,
-      setWordClickMessage,
-      (data) => {
-        if (data.examples?.length > 0) {
-          // Open the modal with the new, separate results
-          openSentencesModal(
-            data.examples,
-            0,
-            frequencyState.lang,
-            "en",
-            `Examples for "${word}"`
-          );
-        }
-        // Returning a message is optional here as it's not displayed anywhere, but good practice
-        return `Found ${data.examples?.length || 0} examples for "${word}".`;
+      const examplesData = await examplesResponse.json();
+      if (!examplesResponse.ok) throw new Error(examplesData.detail);
+      if (examplesData.examples?.length > 0) {
+        openSentencesModal(
+          examplesData.examples,
+          0,
+          lang,
+          "en",
+          `Examples for "${clickedWord}"`
+        );
+      } else {
+        // Show a message if no examples found from word click
+        setSearchMessage({
+          message: `No examples found for "${clickedWord}"`,
+          type: "info",
+        });
       }
-    );
+
+      const translationData = await translationResponse.json();
+      if (!translationResponse.ok) throw new Error(translationData.detail);
+      setModalTranslatedWord(translationData.translated_word);
+    } catch (error) {
+      setSearchMessage({ message: error.message, type: "error" });
+    } finally {
+      setModalWordLoading(false);
+    }
   };
 
-  // Modal functions remain the same, they are generic enough to handle any data source
+  // --- Modal Functions ---
   const openSentencesModal = (sentences, idx, srcLang, tgtLang, title) => {
     const processedSentences = sentences.map((s) => s.sentence || String(s));
     setSentencesModal({
@@ -175,10 +259,9 @@ const AnalysisPage = () => {
     setSentencesModal((prev) => ({ ...prev, isOpen: false }));
 
   const translateSentenceInModal = async (index) => {
-    // This function is self-contained and needs no changes
-    const { sentences, translations, srcLang, tgtLang } = sentencesModal;
+    const { sentences, srcLang, tgtLang } = sentencesModal;
     const sentenceToTranslate = sentences[index].replace(/<[^>]*>/g, "");
-    if (!sentenceToTranslate || translations[index]) return;
+
     try {
       const response = await fetch(`${API_BASE}/translate`, {
         method: "POST",
@@ -190,16 +273,21 @@ const AnalysisPage = () => {
         }),
       });
       const data = await response.json();
-      if (data.translation) {
-        setSentencesModal((prev) => ({
-          ...prev,
-          translations: { ...prev.translations, [index]: data.translation },
-        }));
-      } else {
-        throw new Error(data.error || "Translation failed");
-      }
+      if (!response.ok) throw new Error(data.detail || "Translation failed.");
+      setSentencesModal((prev) => ({
+        ...prev,
+        translations: { ...prev.translations, [index]: data.translation },
+      }));
     } catch (error) {
       console.error("Sentence translation failed:", error);
+      // Optionally, update the UI to show the error for that specific sentence
+      setSentencesModal((prev) => ({
+        ...prev,
+        translations: {
+          ...prev.translations,
+          [index]: `[Error: ${error.message}]`,
+        },
+      }));
     }
   };
 
@@ -220,7 +308,7 @@ const AnalysisPage = () => {
             languageNames={languageNames}
             loading={searchLoading || languagesLoading}
             onSearch={handleTranslateSearch}
-            searchResults={searchResults} // This section only cares about its own results
+            searchResults={searchResults} // Keep this for potential future use (e.g., display if modal is closed)
             onOpenSentences={(sentences, idx) =>
               openSentencesModal(
                 sentences,
@@ -233,7 +321,6 @@ const AnalysisPage = () => {
             speechProps={speechProps}
             message={searchMessage}
           />
-
           <WordFrequencySection
             frequencyState={frequencyState}
             setFrequencyState={setFrequencyState}
@@ -244,18 +331,18 @@ const AnalysisPage = () => {
             onWordClick={handleWordClick}
             results={frequencyResults?.results}
             message={frequencyMessage}
-            loading={frequencyLoading || posTagsLoading || wordClickLoading} // Show loading if fetching examples
+            loading={frequencyLoading || posTagsLoading}
           />
         </div>
       </div>
-
       <SentencesModal
         modalState={sentencesModal}
         closeModal={closeSentencesModal}
         onTranslate={translateSentenceInModal}
         speechProps={speechProps}
+        translatedWord={modalTranslatedWord}
+        isTranslatingWord={modalWordLoading}
       />
-
       <ReadingViewModal
         readingView={readingView}
         closeReadingView={() => setReadingView({ isOpen: false })}
