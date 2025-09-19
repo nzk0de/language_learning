@@ -19,7 +19,7 @@ const Navigation = () => {
               </div>
               <div>
                 <span className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-                  Language Learning
+                  WortReich
                 </span>
                 <div className="text-xs text-gray-500 font-medium">German Study Suite</div>
               </div>
