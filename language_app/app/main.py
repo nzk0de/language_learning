@@ -1,8 +1,9 @@
 # Configure logging
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,9 @@ from app.schema import InputText
 from app.translation import MYTranslator
 from app.validators import validate_word
 from app.youtube_handler import YouTubeHandler, extract_video_id
+
+# Global background task for RSS scheduling
+rss_scheduler_task: Optional[asyncio.Task] = None
 
 logger = logging.getLogger("my_logger")
 logger.setLevel(logging.INFO)
@@ -39,13 +43,19 @@ logger.addHandler(console_handler)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        # Initialize app state
         app.state.translator = MYTranslator()
         app.state.elastic = ElasticHelper()
         app.state.book_manager = BookManager()
+
+        # Start RSS scheduler in background (non-blocking)
+        await start_rss_scheduler()
+
         yield
     finally:
-        # if you need cleanup, do it here
-        pass
+        # Clean shutdown of RSS scheduler
+        await stop_rss_scheduler()
+        logger.info("Application shutdown complete")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -428,26 +438,91 @@ async def get_rss_articles(language: str = "", limit: int = 20, offset: int = 0)
 
 @app.post("/rss/fetch")
 async def trigger_rss_fetch():
-    """Manually trigger RSS feed fetching."""
+    """Manually trigger RSS feed fetching - completely non-blocking."""
     try:
-        helper = get_elastic_helper()
-        result = await helper.fetch_all_rss_feeds()
+        # Run RSS fetch in background without blocking the response
+        asyncio.create_task(fetch_rss_in_background())
 
-        return {"success": True, "results": result, "timestamp": datetime.now().isoformat()}
+        return {
+            "success": True,
+            "message": "RSS feed fetch started in background",
+            "timestamp": datetime.now().isoformat(),
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def fetch_rss_in_background():
+    """Background task to fetch RSS feeds without blocking."""
+    try:
+        helper = get_elastic_helper()
+        result = await helper.fetch_all_rss_feeds()
+        logger.info(f"Background RSS fetch completed: {result.get('totals', {})}")
+    except Exception as e:
+        logger.error(f"Background RSS fetch failed: {e}")
+
+
+async def rss_scheduler():
+    """Non-blocking RSS scheduler that runs every 30 minutes."""
+    fetch_interval = 30 * 60  # 30 minutes in seconds
+
+    while True:
+        try:
+            logger.info("Starting scheduled RSS feed fetch...")
+            await fetch_rss_in_background()
+            logger.info(
+                f"Scheduled RSS fetch completed. Next fetch in {fetch_interval/60} minutes."
+            )
+
+        except Exception as e:
+            logger.error(f"Error in scheduled RSS fetch: {e}")
+
+        # Wait for next interval (non-blocking)
+        await asyncio.sleep(fetch_interval)
+
+
+async def start_rss_scheduler():
+    """Start the RSS scheduler as a background task."""
+    global rss_scheduler_task
+
+    if rss_scheduler_task is None or rss_scheduler_task.done():
+        rss_scheduler_task = asyncio.create_task(rss_scheduler())
+        logger.info("RSS scheduler started (runs every 30 minutes)")
+    else:
+        logger.info("RSS scheduler already running")
+
+
+async def stop_rss_scheduler():
+    """Stop the RSS scheduler."""
+    global rss_scheduler_task
+
+    if rss_scheduler_task and not rss_scheduler_task.done():
+        rss_scheduler_task.cancel()
+        try:
+            await rss_scheduler_task
+        except asyncio.CancelledError:
+            logger.info("RSS scheduler stopped")
+    else:
+        logger.info("RSS scheduler was not running")
+
+
 @app.get("/rss/status")
 async def get_rss_status():
-    """Get RSS scheduler status (simplified)."""
+    """Get RSS scheduler status."""
+    global rss_scheduler_task
+
+    scheduler_running = rss_scheduler_task is not None and not rss_scheduler_task.done()
+
     return {
-        "message": "RSS feeds available via manual fetch",
+        "scheduler_running": scheduler_running,
+        "fetch_interval_minutes": 30,
+        "message": "RSS scheduler runs automatically every 30 minutes",
         "current_time": datetime.now().isoformat(),
         "endpoints": [
             "GET /rss/articles - Get recent RSS articles",
             "POST /rss/fetch - Manually trigger RSS fetch",
+            "GET /rss/status - Check scheduler status",
         ],
     }
 
@@ -479,14 +554,6 @@ def translate_search_examples(word: str, src_lang: str, tgt_lang: str, limit: in
     return {"translated_word": word, "examples": []}
 
 
-# Add startup and shutdown events
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on startup."""
-    logger.info("RSS feed scheduler started")
+# Make RSS fetch completely async and non-blocking
 
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up background tasks on shutdown."""
-    logger.info("RSS feed scheduler stopped")
+# No background scheduler - RSS fetch is manual only

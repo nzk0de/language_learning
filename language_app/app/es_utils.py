@@ -611,7 +611,7 @@ class ElasticHelper:
                         try:
                             published = datetime(*entry.published_parsed[:6])
                         except Exception as e:
-                            print(f"Error parsing published date: {e}")
+                            logger.error(f"Error parsing published date: {e}")
                             pass
 
                     article = {
