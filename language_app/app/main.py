@@ -1,16 +1,17 @@
 from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Dict
 
-from fastapi import Depends, FastAPI, Query, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-import os
+from fastapi.responses import FileResponse
 
-from app.es_utils import ElasticHelper
-from app.schema import InputText, InsertText
-from app.translation import MYTranslator
-from app.validators import validate_sentence, validate_word
 from app.book_manager import BookManager
+from app.es_utils import ElasticHelper
+from app.schema import InputText
+from app.translation import MYTranslator
+from app.validators import validate_word
+from app.youtube_handler import YouTubeHandler, extract_video_id
 
 
 @asynccontextmanager
@@ -36,6 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ---------- Dependencies ----------
 def get_translator():
     return app.state.translator
@@ -54,7 +56,7 @@ def get_book_manager():
 async def translate(item: InputText, translator: MYTranslator = Depends(get_translator)):
     if item.src_lang not in translator.lang_codes or item.tgt_lang not in translator.lang_codes:
         return {"error": f"Invalid lang code. Supported: {sorted(translator.lang_codes)}"}
-    
+
     # Use the new async translate method
     translation = await translator.translate(item.text, src=item.src_lang, dest=item.tgt_lang)
     return {"translation": translation}
@@ -65,93 +67,84 @@ def get_languages(translator: MYTranslator = Depends(get_translator)):
     return {
         "languages": translator.supported_languages,
         "language_codes": sorted(translator.lang_codes),
-        "total_supported": len(translator.lang_codes)
+        "total_supported": len(translator.lang_codes),
     }
 
 
-
-@app.get("/translate_search")
-async def translate_search(
-    word: str = Query(..., description="Single word in any language"),
-    src_lang: str = "en",
-    tgt_lang: str = "de",
-    corpus_lang: str = Query("de", description="Language of the corpus to search in"),
-    limit: int = 5,
+@app.get("/translate/word")
+async def translate_word_endpoint(
+    word: str = Query(..., description="The word to translate"),
+    src_lang: str = Query(..., description="Source language of the word"),
+    tgt_lang: str = Query(..., description="Target language for the translation"),
     translator: MYTranslator = Depends(get_translator),
-    elastic: ElasticHelper = Depends(get_elastic),
 ):
-    """Simplified translate and search: translates word and searches specified corpus language"""
-    # ✅ Validate input is a real single word in source language
+    """
+    Translates a single word. This is kept separate for asynchronous calling.
+    """
+    # Validation
     if not validate_word(word, src_lang):
-        return {"error": f"'{word}' is not a valid word in {src_lang}"}
+        raise HTTPException(status_code=400, detail=f"'{word}' is not a valid word in {src_lang}")
 
-    # Validate language codes
-    if src_lang not in translator.lang_codes or tgt_lang not in translator.lang_codes or corpus_lang not in translator.lang_codes:
-        return {"error": f"Invalid lang code. Supported: {sorted(translator.lang_codes)}"}
+    if not all(lang in translator.lang_codes for lang in [src_lang, tgt_lang]):
+        raise HTTPException(status_code=400, detail="Invalid language code provided.")
 
-    # Step 1: Translate word using async method
-    translated = await translator.translate(word, src=src_lang, dest=tgt_lang)
-
-    # Step 2: Simplified logic - determine what word to search for in corpus_lang
-    if src_lang == corpus_lang:
-        # Input is in corpus language, search for original word
-        search_word = word
-    elif tgt_lang == corpus_lang:
-        # Translation target is corpus language, search for translated word
-        search_word = translated
-    else:
-        # Neither input nor target matches corpus language - translate to corpus language
-        search_word = await translator.translate(word, src=src_lang, dest=corpus_lang)
-
-    # Step 3: Always search in the specified corpus language
-    examples = elastic.search_unified(search_word, corpus_lang, limit)
+    # Perform the translation
+    translated_word = await translator.translate(word, src=src_lang, dest=tgt_lang)
 
     return {
         "source_word": word,
-        "source_lang": src_lang, 
-        "translated_word": translated,
+        "translated_word": translated_word,
+        "source_lang": src_lang,
         "target_lang": tgt_lang,
-        "search_word": search_word,
+    }
+
+
+@app.get("/books")
+def get_books(
+    search: str = Query(None, description="Search books by title, author, or description"),
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    limit: int = Query(20, ge=1, le=100, description="Number of books per page"),
+    refresh: bool = Query(False, description="Force refresh book metadata cache"),
+    book_manager: BookManager = Depends(get_book_manager),
+):
+    """Get all available EPUB books with metadata, with server-side search and pagination."""
+    try:
+        # The book manager now handles caching internally, so force_refresh is passed down
+        if refresh:
+            book_manager.get_all_books(force_refresh=True)
+
+        results = book_manager.search_books(query=search, page=page, limit=limit)
+        return results
+
+    except Exception as e:
+        # Return a proper error response
+        raise HTTPException(status_code=500, detail=f"Failed to get books: {str(e)}")
+
+
+@app.get("/search/examples")
+def search_examples_endpoint(
+    word: str = Query(..., description="The word to search for in the corpus"),
+    corpus_lang: str = Query(..., description="The language of the corpus"),
+    limit: int = 5,
+    elastic: ElasticHelper = Depends(get_elastic),
+):
+    """
+    Performs a fast search for example sentences in Elasticsearch.
+    This endpoint does NOT perform any translations.
+    """
+    # Basic validation
+    if not word or not corpus_lang:
+        raise HTTPException(status_code=400, detail="Both 'word' and 'corpus_lang' are required.")
+
+    # Directly call the fast, optimized Elasticsearch search
+    examples = elastic.search_examples(word, corpus_lang, limit)
+
+    return {
+        "search_word": word,
         "corpus_lang": corpus_lang,
         "examples": examples,
-        "total_found": len(examples)
+        "total_found": len(examples),
     }
-
-
-@app.get("/quality/config")
-def get_quality_config(elastic: ElasticHelper = Depends(get_elastic)):
-    """Get current quality filtering configuration"""
-    return {
-        "config": elastic.quality_config,
-        "description": {
-            "min_length": "Minimum sentence length in characters",
-            "max_length": "Maximum sentence length in characters", 
-            "min_words": "Minimum number of words in sentence",
-            "max_upper_ratio": "Maximum ratio of uppercase letters (0.0-1.0)",
-            "min_alpha_ratio": "Minimum ratio of alphabetic characters (0.0-1.0)",
-            "enable_quality_filter": "Whether to apply quality filtering"
-        }
-    }
-
-
-@app.post("/quality/config")
-def update_quality_config(
-    config: dict,
-    elastic: ElasticHelper = Depends(get_elastic)
-):
-    """Update quality filtering configuration"""
-    try:
-        elastic.configure_quality_filter(**config)
-        return {
-            "success": True,
-            "message": "Quality configuration updated",
-            "new_config": elastic.quality_config
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
 
 
 @app.get("/word_frequency/{pos_tag}")
@@ -166,18 +159,14 @@ def get_word_frequency_by_pos(
     """Get word frequency analysis by POS tag with ranking range"""
     try:
         result = elastic.get_word_frequency_by_pos(
-            pos_tag=pos_tag,
-            lang=lang,
-            size=size,
-            start_rank=start_rank,
-            end_rank=end_rank
+            pos_tag=pos_tag, lang=lang, size=size, start_rank=start_rank, end_rank=end_rank
         )
-        
+
         if "error" in result:
             return {"error": result["error"]}
-            
+
         return result
-        
+
     except Exception as e:
         return {"error": f"Failed to get word frequency: {str(e)}"}
 
@@ -191,80 +180,23 @@ def get_available_pos_tags(
     """Get all available POS tags in the corpus"""
     try:
         pos_tags = elastic.get_available_pos_tags(lang=lang, limit=limit)
-        return {
-            "language": lang,
-            "pos_tags": pos_tags,
-            "total_count": len(pos_tags)
-        }
-        
+        return {"language": lang, "pos_tags": pos_tags, "total_count": len(pos_tags)}
+
     except Exception as e:
         return {"error": f"Failed to get POS tags: {str(e)}"}
 
 
-
-@app.post("/quality/test")
-def test_sentence_quality(
-    sentences: list[str],
-    elastic: ElasticHelper = Depends(get_elastic)
-):
-    """Test sentence quality for a list of sentences"""
-    results = []
-    for sentence in sentences:
-        is_quality = elastic.is_quality_sentence(sentence)
-        results.append({
-            "sentence": sentence,
-            "is_quality": is_quality,
-            "length": len(sentence),
-            "word_count": len(sentence.split())
-        })
-    
-    stats = elastic.get_quality_stats(sentences)
-    
-    return {
-        "results": results,
-        "stats": stats,
-        "config_used": elastic.quality_config
-    }
-
-
 # ---------- Book Management Endpoints ----------
-
-@app.get("/books")
-def get_books(
-    search: str = Query(None, description="Search books by title, author, or description"),
-    refresh: bool = Query(False, description="Force refresh book metadata cache"),
-    book_manager: BookManager = Depends(get_book_manager)
-):
-    """Get all available EPUB books with metadata"""
-    try:
-        if search:
-            books = book_manager.search_books(search)
-        else:
-            books = book_manager.get_all_books(force_refresh=refresh)
-        
-        return {
-            "books": books,
-            "count": len(books),
-            "search_query": search if search else None
-        }
-        
-    except Exception as e:
-        return {"error": f"Failed to get books: {str(e)}"}
-
-
 @app.get("/books/{filename}")
-def get_book_info(
-    filename: str,
-    book_manager: BookManager = Depends(get_book_manager)
-):
+def get_book_info(filename: str, book_manager: BookManager = Depends(get_book_manager)):
     """Get detailed information about a specific book"""
     try:
         book = book_manager.get_book_by_filename(filename)
         if not book:
             raise HTTPException(status_code=404, detail="Book not found")
-        
+
         return book
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -272,22 +204,15 @@ def get_book_info(
 
 
 @app.get("/books/{filename}/download")
-def download_book(
-    filename: str,
-    book_manager: BookManager = Depends(get_book_manager)
-):
+def download_book(filename: str, book_manager: BookManager = Depends(get_book_manager)):
     """Download an EPUB book file"""
     try:
         book_path = book_manager.get_book_path(filename)
         if not book_path:
             raise HTTPException(status_code=404, detail="Book file not found")
-        
-        return FileResponse(
-            path=book_path,
-            filename=filename,
-            media_type="application/epub+zip"
-        )
-        
+
+        return FileResponse(path=book_path, filename=filename, media_type="application/epub+zip")
+
     except HTTPException:
         raise
     except Exception as e:
@@ -295,22 +220,17 @@ def download_book(
 
 
 @app.get("/books/{filename}/cover")
-def get_book_cover(
-    filename: str,
-    book_manager: BookManager = Depends(get_book_manager)
-):
+def get_book_cover(filename: str, book_manager: BookManager = Depends(get_book_manager)):
     """Get book cover image"""
     try:
         cover_data = book_manager.get_book_cover(filename)
         if not cover_data:
             raise HTTPException(status_code=404, detail="Cover image not found")
-        
+
         from fastapi.responses import Response
-        return Response(
-            content=cover_data,
-            media_type="image/jpeg"
-        )
-        
+
+        return Response(content=cover_data, media_type="image/jpeg")
+
     except HTTPException:
         raise
     except Exception as e:
@@ -318,16 +238,13 @@ def get_book_cover(
 
 
 @app.get("/books/{filename}/read")
-def serve_epub_for_reading(
-    filename: str,
-    book_manager: BookManager = Depends(get_book_manager)
-):
+def serve_epub_for_reading(filename: str, book_manager: BookManager = Depends(get_book_manager)):
     """Serve EPUB file for online reading with proper CORS headers"""
     try:
         book_path = book_manager.get_book_path(filename)
         if not book_path:
             raise HTTPException(status_code=404, detail="Book file not found")
-        
+
         return FileResponse(
             path=book_path,
             media_type="application/epub+zip",
@@ -337,146 +254,32 @@ def serve_epub_for_reading(
                 "Access-Control-Allow-Methods": "GET",
                 "Access-Control-Allow-Headers": "Range, Content-Range, Accept-Ranges",
                 "Accept-Ranges": "bytes",
-                "Cache-Control": "public, max-age=3600"
-            }
+                "Cache-Control": "public, max-age=3600",
+            },
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to serve book: {str(e)}")
 
 
-@app.get("/books/{filename}/content/{resource_path:path}")
-def serve_epub_resource(
-    filename: str,
-    resource_path: str,
-    book_manager: BookManager = Depends(get_book_manager)
-):
-    """Serve individual resources from EPUB (images, CSS, etc.)"""
-    try:
-        import zipfile
-        from fastapi.responses import Response
-        
-        book_path = book_manager.get_book_path(filename)
-        if not book_path:
-            raise HTTPException(status_code=404, detail="Book file not found")
-        
-        with zipfile.ZipFile(book_path, 'r') as epub_zip:
-            if resource_path not in epub_zip.namelist():
-                raise HTTPException(status_code=404, detail="Resource not found")
-            
-            resource_data = epub_zip.read(resource_path)
-            
-            # Determine content type based on file extension
-            content_type = "application/octet-stream"
-            if resource_path.lower().endswith(('.jpg', '.jpeg')):
-                content_type = "image/jpeg"
-            elif resource_path.lower().endswith('.png'):
-                content_type = "image/png"
-            elif resource_path.lower().endswith('.gif'):
-                content_type = "image/gif"
-            elif resource_path.lower().endswith('.css'):
-                content_type = "text/css"
-            elif resource_path.lower().endswith(('.html', '.xhtml')):
-                content_type = "application/xhtml+xml"
-            elif resource_path.lower().endswith('.js'):
-                content_type = "application/javascript"
-            
-            return Response(
-                content=resource_data,
-                media_type=content_type,
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "public, max-age=3600"
-                }
-            )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to serve resource: {str(e)}")
-
-
-@app.get("/books/{filename}/stream")
-def stream_epub(
-    filename: str,
-    request: Request,
-    book_manager: BookManager = Depends(get_book_manager)
-):
-    """Stream EPUB file with range support for better loading"""
-    try:
-        book_path = book_manager.get_book_path(filename)
-        if not book_path:
-            raise HTTPException(status_code=404, detail="Book file not found")
-        
-        file_size = os.path.getsize(book_path)
-        range_header = request.headers.get('Range')
-        
-        def generate_chunks(start: int = 0, end: int = file_size - 1):
-            with open(book_path, 'rb') as f:
-                f.seek(start)
-                remaining = end - start + 1
-                while remaining > 0:
-                    chunk_size = min(8192, remaining)  # 8KB chunks
-                    chunk = f.read(chunk_size)
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
-                    yield chunk
-        
-        if range_header:
-            # Handle range requests for partial content
-            range_match = range_header.replace('bytes=', '').split('-')
-            start = int(range_match[0]) if range_match[0] else 0
-            end = int(range_match[1]) if range_match[1] else file_size - 1
-            
-            content_length = end - start + 1
-            
-            return StreamingResponse(
-                generate_chunks(start, end),
-                status_code=206,
-                headers={
-                    'Content-Range': f'bytes {start}-{end}/{file_size}',
-                    'Accept-Ranges': 'bytes',
-                    'Content-Length': str(content_length),
-                    'Content-Type': 'application/epub+zip',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length'
-                }
-            )
-        else:
-            # Return full file
-            return StreamingResponse(
-                generate_chunks(),
-                headers={
-                    'Content-Length': str(file_size),
-                    'Content-Type': 'application/epub+zip',
-                    'Access-Control-Allow-Origin': '*',
-                    'Accept-Ranges': 'bytes'
-                }
-            )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to stream book: {str(e)}")
-
-
 @app.post("/books/{filename}/open")
-async def open_book_with_system(filename: str, book_manager: BookManager = Depends(get_book_manager)):
+async def open_book_with_system(
+    filename: str, book_manager: BookManager = Depends(get_book_manager)
+):
     """Open book with system default application."""
-    import subprocess
     import platform
-    
+    import subprocess
+
     try:
         book_path = book_manager.get_book_path(filename)
         if not book_path:
             raise HTTPException(status_code=404, detail="Book not found")
-        
+
         # Get the absolute path
         abs_path = str(book_path.absolute())
-        
+
         # Open with system default application
         system = platform.system()
         try:
@@ -486,12 +289,96 @@ async def open_book_with_system(filename: str, book_manager: BookManager = Depen
                 subprocess.run(["start", abs_path], shell=True, check=True)
             else:  # Linux
                 subprocess.run(["xdg-open", abs_path], check=True)
-            
-            return {"success": True, "message": f"Opened {filename} with system default application"}
+
+            return {
+                "success": True,
+                "message": f"Opened {filename} with system default application",
+            }
         except subprocess.CalledProcessError as e:
             raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to open book: {str(e)}")
+
+
+# Add this dependency
+def get_youtube_handler(translator: MYTranslator = Depends(get_translator)):
+    return YouTubeHandler(translator)
+
+
+# --- New YouTube Endpoints ---
+
+
+@app.post("/youtube/save")
+async def save_youtube_video(
+    youtube_url: str,
+    src_lang: str,
+    tgt_lang: str,
+    handler: YouTubeHandler = Depends(get_youtube_handler),
+    elastic: ElasticHelper = Depends(get_elastic),
+):
+    video_id = extract_video_id(youtube_url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL provided.")
+
+    try:
+        # Use a library like pytube to get video metadata (optional but recommended)
+        # For simplicity, we'll use placeholder metadata
+        # from pytube import YouTube
+        # yt = YouTube(youtube_url)
+        # title = yt.title
+        # thumbnail_url = yt.thumbnail_url
+        title = f"YouTube Video: {video_id}"
+        thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+
+        # Process the transcript
+        processed_transcript: Dict[str, str] = await handler.process_video(
+            video_id, src_lang, tgt_lang
+        )
+
+        if not processed_transcript:
+            raise HTTPException(
+                status_code=404, detail=f"Could not generate transcript for {src_lang}."
+            )
+
+        video_document = {
+            "video_id": video_id,
+            "title": title,
+            "thumbnail_url": thumbnail_url,
+            "src_lang": src_lang,
+            "tgt_lang": tgt_lang,
+            "saved_at": datetime.utcnow(),
+            "transcript": processed_transcript,
+        }
+
+        # Save to Elasticsearch
+        result = elastic.insert_youtube_video(video_document)
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail="Failed to save video to database.")
+
+        return {
+            "success": True,
+            "message": f"Video '{title}' saved successfully.",
+            "data": video_document,
+        }
+
+    except ValueError as e:  # From transcript fetching
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+@app.get("/youtube/saved")
+def get_saved_youtube_videos(elastic: ElasticHelper = Depends(get_elastic)):
+    videos = elastic.get_saved_videos()
+    return {"videos": videos}
+
+
+@app.get("/youtube/saved/{video_id}")
+def get_saved_video_details(video_id: str, elastic: ElasticHelper = Depends(get_elastic)):
+    video = elastic.get_saved_video_by_id(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found.")
+    return video

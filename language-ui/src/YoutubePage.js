@@ -79,12 +79,8 @@ const YoutubePage = () => {
         throw new Error(videoData.detail || "Failed to fetch video details.");
       }
       // The ReadingViewModal needs separate texts, not a combined transcript object
-      const originalText = videoData.transcript
-        .map((t) => t.original_sentence)
-        .join("\n\n");
-      const translatedText = videoData.transcript
-        .map((t) => t.translated_sentence)
-        .join("\n\n");
+      const originalText = videoData.transcript.original_text;
+      const translatedText = videoData.transcript.translated_text;
 
       setReadingView({
         isOpen: true,
