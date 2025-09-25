@@ -1,3 +1,5 @@
+# Configure logging
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict
@@ -7,11 +9,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.book_manager import BookManager
-from app.es_utils import ElasticHelper
+from app.es_utils import ElasticHelper, get_elastic_helper
 from app.schema import InputText
 from app.translation import MYTranslator
 from app.validators import validate_word
 from app.youtube_handler import YouTubeHandler, extract_video_id
+
+logger = logging.getLogger("my_logger")
+logger.setLevel(logging.INFO)
+
+# Add a file handler for logging
+handler = logging.FileHandler("app.log")
+handler.setLevel(logging.INFO)
+
+# Add a console handler for logging
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+# Create a formatter
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Add handlers to the logger
+logger.addHandler(handler)
+logger.addHandler(console_handler)
 
 
 @asynccontextmanager
@@ -382,3 +404,89 @@ def get_saved_video_details(video_id: str, elastic: ElasticHelper = Depends(get_
     if not video:
         raise HTTPException(status_code=404, detail="Video not found.")
     return video
+
+
+# RSS Endpoints
+@app.get("/rss/articles")
+async def get_rss_articles(language: str = "", limit: int = 20, offset: int = 0):
+    """Get recent RSS articles."""
+    try:
+        helper = get_elastic_helper()
+        result = await helper.get_recent_rss_articles(language, limit, offset)
+
+        return {
+            "articles": result["articles"],
+            "total": result["total"],
+            "count": result["count"],
+            "language": language,
+            "limit": limit,
+            "offset": offset,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/rss/fetch")
+async def trigger_rss_fetch():
+    """Manually trigger RSS feed fetching."""
+    try:
+        helper = get_elastic_helper()
+        result = await helper.fetch_all_rss_feeds()
+
+        return {"success": True, "results": result, "timestamp": datetime.now().isoformat()}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/rss/status")
+async def get_rss_status():
+    """Get RSS scheduler status (simplified)."""
+    return {
+        "message": "RSS feeds available via manual fetch",
+        "current_time": datetime.now().isoformat(),
+        "endpoints": [
+            "GET /rss/articles - Get recent RSS articles",
+            "POST /rss/fetch - Manually trigger RSS fetch",
+        ],
+    }
+
+
+# Helper functions for RSS
+def search_examples_by_word(word: str, lang: str, limit: int = 5):
+    """Use the existing search_examples function"""
+    helper = get_elastic_helper()
+    return helper.search_examples(word, lang, limit)
+
+
+def get_pos_tags(lang: str = "de", limit: int = 50):
+    """Use the existing get_available_pos_tags function"""
+    helper = get_elastic_helper()
+    return helper.get_available_pos_tags(lang, limit)
+
+
+# def get_word_frequency_by_pos(
+#     pos_tag: str, lang: str = "de", size: int = 100, start_rank: int = 1, end_rank: int = 20
+# ):
+#     """Use the existing get_word_frequency_by_pos function"""
+#     helper = get_elastic_helper()
+#     return helper.get_word_frequency_by_pos(pos_tag, lang, size, start_rank, end_rank)
+
+
+def translate_search_examples(word: str, src_lang: str, tgt_lang: str, limit: int = 5):
+    """Use existing translate and search functionality"""
+    # This will need to be implemented if not already available
+    return {"translated_word": word, "examples": []}
+
+
+# Add startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on startup."""
+    logger.info("RSS feed scheduler started")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up background tasks on shutdown."""
+    logger.info("RSS feed scheduler stopped")

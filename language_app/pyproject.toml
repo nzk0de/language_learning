@@ -23,6 +23,13 @@ dependencies = [
     "pytest",
     "httpx",
     "python-dotenv",
+    "feedparser",
+    "newspaper3k",
+    "lxml[html_clean]",
+    "bs4",
+    "beautifulsoup4",
+    "aiohttp",
+    "schedule"
 ]
 [project.optional-dependencies]
 dev = [

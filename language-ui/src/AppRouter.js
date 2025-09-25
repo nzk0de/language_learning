@@ -5,11 +5,12 @@ import {
   Link,
   useLocation,
 } from "react-router-dom";
-import { Languages, Book, BarChart3, Maximize2 } from "lucide-react";
+import { Languages, Book, BarChart3, Maximize2, Globe } from "lucide-react";
 import BooksPage from "./BooksPage";
 // import TranslationPage from "./TranslationPage";
 import AnalysisPage from "./AnalysisPage";
 import YoutubePage from "./YoutubePage";
+import RSSPage from "./RSSPage";
 
 const Navigation = () => {
   const location = useLocation();
@@ -71,6 +72,17 @@ const Navigation = () => {
                 <Book className="w-4 h-4" />
                 <span>Library</span>
               </Link>
+              <Link
+                to="/rss"
+                className={`px-4 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 transform hover:-translate-y-0.5 ${
+                  location.pathname === "/rss"
+                    ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25"
+                    : "text-gray-600 hover:text-indigo-600 hover:bg-indigo-50/80 hover:shadow-md"
+                }`}
+              >
+                <Globe className="w-4 h-4" />
+                <span>RSS News</span>
+              </Link>
             </div>
           </div>
 
@@ -95,6 +107,7 @@ const AppRouter = () => {
           <Route path="/translation" element={<YoutubePage />} />
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/books" element={<BooksPage />} />
+          <Route path="/rss" element={<RSSPage />} />
         </Routes>
       </div>
     </Router>
