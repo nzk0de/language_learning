@@ -8,8 +8,10 @@ from typing import Dict, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.book_manager import BookManager
+from app.embeddings_analyzer import get_embeddings_analyzer
 from app.es_utils import ElasticHelper, get_elastic_helper
 from app.schema import InputText
 from app.translation import MYTranslator
@@ -552,6 +554,45 @@ def translate_search_examples(word: str, src_lang: str, tgt_lang: str, limit: in
     """Use existing translate and search functionality"""
     # This will need to be implemented if not already available
     return {"translated_word": word, "examples": []}
+
+
+# Embeddings Analysis Models
+class EmbeddingsAnalysisRequest(BaseModel):
+    sentence: str
+    sort_method: str = "frequency"
+    k: int = 10
+    language: str = "de"
+
+
+@app.post("/embeddings/analyze")
+async def analyze_sentence_commonality(request: EmbeddingsAnalysisRequest):
+    """Analyze sentence to extract and rank most common words using embeddings."""
+    try:
+        # Validate k parameter
+        if request.k < 1 or request.k > 50:
+            raise HTTPException(status_code=400, detail="k must be between 1 and 50")
+
+        analyzer = get_embeddings_analyzer()
+        result = analyzer.analyze_sentence_commonality(
+            sentence=request.sentence,
+            sort_method=request.sort_method,
+            k=request.k,
+        )
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error analyzing sentence: {str(e)}")
+
+
+@app.get("/embeddings/sort-methods")
+async def get_sort_methods():
+    """Get available sorting methods for embeddings analysis."""
+    try:
+        analyzer = get_embeddings_analyzer()
+        return {"sort_methods": analyzer.get_available_sort_methods()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting sort methods: {str(e)}")
 
 
 # Make RSS fetch completely async and non-blocking

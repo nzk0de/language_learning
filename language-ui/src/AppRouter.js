@@ -8,7 +8,7 @@ import {
 import { Languages, Book, BarChart3, Maximize2, Globe } from "lucide-react";
 import BooksPage from "./BooksPage";
 // import TranslationPage from "./TranslationPage";
-import AnalysisPage from "./AnalysisPage";
+import PlayGround from "./PlayGround";
 import YoutubePage from "./YoutubePage";
 import RSSPage from "./RSSPage";
 
@@ -58,7 +58,7 @@ const Navigation = () => {
                 }`}
               >
                 <BarChart3 className="w-4 h-4" />
-                <span className="hidden lg:inline">Analysis & Research</span>
+                <span className="hidden lg:inline">Playground</span>
                 <span className="lg:hidden">Analysis</span>
               </Link>
               <Link
@@ -105,7 +105,7 @@ const AppRouter = () => {
         <Routes>
           <Route path="/" element={<YoutubePage />} />
           <Route path="/translation" element={<YoutubePage />} />
-          <Route path="/analysis" element={<AnalysisPage />} />
+          <Route path="/analysis" element={<PlayGround />} />
           <Route path="/books" element={<BooksPage />} />
           <Route path="/rss" element={<RSSPage />} />
         </Routes>
