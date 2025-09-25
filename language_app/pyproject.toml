@@ -29,7 +29,10 @@ dependencies = [
     "bs4",
     "beautifulsoup4",
     "aiohttp",
-    "schedule"
+    "schedule",
+    "scikit-learn",
+    "sentence-transformers",
+    "faiss-cpu"
 ]
 [project.optional-dependencies]
 dev = [
