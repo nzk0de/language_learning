@@ -569,7 +569,7 @@ async def analyze_sentence_commonality(request: EmbeddingsAnalysisRequest):
     """Analyze sentence to extract and rank most common words using embeddings."""
     try:
         # Validate k parameter
-        if request.k < 1 or request.k > 50:
+        if request.k < 1 or request.k > 200:
             raise HTTPException(status_code=400, detail="k must be between 1 and 50")
 
         analyzer = get_embeddings_analyzer()

@@ -11,6 +11,7 @@ import BooksPage from "./BooksPage";
 import PlayGround from "./PlayGround";
 import YoutubePage from "./YoutubePage";
 import RSSPage from "./RSSPage";
+import LandingPage from "./LandingPage";
 
 const Navigation = () => {
   const location = useLocation();
@@ -100,16 +101,23 @@ const Navigation = () => {
 const AppRouter = () => {
   return (
     <Router>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
-        <Navigation />
-        <Routes>
-          <Route path="/" element={<YoutubePage />} />
-          <Route path="/translation" element={<YoutubePage />} />
-          <Route path="/analysis" element={<PlayGround />} />
-          <Route path="/books" element={<BooksPage />} />
-          <Route path="/rss" element={<RSSPage />} />
-        </Routes>
-      </div>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route
+          path="/*"
+          element={
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+              <Navigation />
+              <Routes>
+                <Route path="/translation" element={<YoutubePage />} />
+                <Route path="/analysis" element={<PlayGround />} />
+                <Route path="/books" element={<BooksPage />} />
+                <Route path="/rss" element={<RSSPage />} />
+              </Routes>
+            </div>
+          }
+        />
+      </Routes>
     </Router>
   );
 };
