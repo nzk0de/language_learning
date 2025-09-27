@@ -4,3 +4,4 @@ __pycache__/
 *.egg-info/
 dev/
 german_books/
+node_modules/
