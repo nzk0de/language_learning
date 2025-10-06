@@ -5,8 +5,7 @@ import { useDataFetching } from "./hooks/useDataFetching";
 import { TextTranslationSection } from "./components/translation/TextTranslationSection";
 import { YoutubeReadingViewSection } from "./components/translation/YoutubeReadingViewSection";
 import ReadingViewModal from "./components/modals/ReadingViewModal";
-
-const API_BASE = "http://localhost:8000";
+import { buildApiUrl } from "./config/api";
 
 const extractYouTubeVideoId = (url) => {
   if (!url) return null;
@@ -45,7 +44,7 @@ const TranslationPage = () => {
     setTranslateMessage(null);
     setTranslationResult("");
     try {
-      const response = await fetch(`${API_BASE}/translate`, {
+      const response = await fetch(buildApiUrl("translate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -117,7 +116,7 @@ const TranslationPage = () => {
     if (!finalTranslatedText.trim() && form.original.trim()) {
       setTranslateLoading(true); // Show a loading indicator
       try {
-        const response = await fetch(`${API_BASE}/translate`, {
+        const response = await fetch(buildApiUrl("translate"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

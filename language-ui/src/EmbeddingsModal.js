@@ -17,6 +17,7 @@ import {
   ExternalLink,
   RefreshCw,
 } from "lucide-react";
+import { buildApiUrl } from "./config/api";
 
 const EmbeddingsModal = ({ isOpen, onClose }) => {
   const [sentence, setSentence] = useState("");
@@ -28,14 +29,12 @@ const EmbeddingsModal = ({ isOpen, onClose }) => {
   const [sortMethods, setSortMethods] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
 
-  const API_BASE = "http://localhost:8000";
-
   // ... (useEffect and other functions remain the same) ...
   // Load available sort methods
   useEffect(() => {
     const fetchSortMethods = async () => {
       try {
-        const response = await fetch(`${API_BASE}/embeddings/sort-methods`);
+        const response = await fetch(buildApiUrl("embeddings/sort-methods"));
         const data = await response.json();
         if (data.sort_methods) {
           setSortMethods(data.sort_methods);
@@ -80,7 +79,7 @@ const EmbeddingsModal = ({ isOpen, onClose }) => {
         language: language,
       };
 
-      const response = await fetch(`${API_BASE}/embeddings/analyze`, {
+      const response = await fetch(buildApiUrl("embeddings/analyze"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-
-const API_BASE = "http://localhost:8000";
+import { buildApiUrl } from "../config/api";
 
 // Debounce helper function
 const debounce = (func, delay) => {
@@ -26,7 +25,7 @@ export const useBooks = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${API_BASE}/books`);
+        const response = await fetch(buildApiUrl("books"));
         if (!response.ok) throw new Error("Network response was not ok");
         const data = await response.json();
         if (data.books) {

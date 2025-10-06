@@ -4,8 +4,7 @@ import { useDataFetching } from "./hooks/useDataFetching";
 import { YoutubeSaverSection } from "./components/translation/YoutubeSaverSection";
 import { SavedVideosList } from "./components/translation/SavedVideosList";
 import ReadingViewModal from "./components/modals/ReadingViewModal";
-
-const API_BASE = "http://localhost:8000";
+import { buildApiUrl } from "./config/api";
 
 const YoutubePage = () => {
   const speechProps = useSpeech();
@@ -28,7 +27,7 @@ const YoutubePage = () => {
   const fetchSavedVideos = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/youtube/saved`);
+      const response = await fetch(buildApiUrl("youtube/saved"));
       const data = await response.json();
       if (data.videos) {
         setSavedVideos(data.videos);
@@ -50,9 +49,9 @@ const YoutubePage = () => {
     setMessage(null);
     try {
       const response = await fetch(
-        `${API_BASE}/youtube/save?youtube_url=${encodeURIComponent(
+        buildApiUrl(`youtube/save?youtube_url=${encodeURIComponent(
           url
-        )}&src_lang=${srcLang}&tgt_lang=${tgtLang}`,
+        )}&src_lang=${srcLang}&tgt_lang=${tgtLang}`),
         {
           method: "POST",
         }
@@ -73,7 +72,7 @@ const YoutubePage = () => {
   const handleVideoSelect = async (videoId) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/youtube/saved/${videoId}`);
+      const response = await fetch(buildApiUrl(`youtube/saved/${videoId}`));
       const videoData = await response.json();
       if (!response.ok) {
         throw new Error(videoData.detail || "Failed to fetch video details.");

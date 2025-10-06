@@ -6,8 +6,7 @@ import { WordFrequencySection } from "./components/analysis/WordFrequencySection
 import { SentencesModal } from "./components/modals/SentencesModal";
 import ReadingViewModal from "./components/modals/ReadingViewModal";
 import EmbeddingsModal from "./EmbeddingsModal";
-
-const API_BASE = "http://localhost:8000";
+import { buildApiUrl } from "./config/api";
 
 const PlayGround = () => {
   // --- Hooks ---
@@ -88,9 +87,9 @@ const PlayGround = () => {
     // This is a necessary sequential step before parallel fetching can begin.
     if (src !== learningLanguage) {
       try {
-        const url = `${API_BASE}/translate/word?word=${encodeURIComponent(
+        const url = buildApiUrl(`translate/word?word=${encodeURIComponent(
           word
-        )}&src_lang=${src}&tgt_lang=${learningLanguage}`;
+        )}&src_lang=${src}&tgt_lang=${learningLanguage}`);
         const response = await fetch(url);
         const data = await response.json();
         if (!response.ok)
@@ -111,17 +110,17 @@ const PlayGround = () => {
 
     // Step 2: Now that we have the correct search term, run fetches in parallel.
     const fetchExamplesPromise = fetch(
-      `${API_BASE}/search/examples?word=${encodeURIComponent(
+      buildApiUrl(`search/examples?word=${encodeURIComponent(
         wordToSearchInCorpus
-      )}&corpus_lang=${learningLanguage}&limit=10`
+      )}&corpus_lang=${learningLanguage}&limit=10`)
     );
     const translateWordPromise =
       src === tgt
         ? Promise.resolve(null)
         : fetch(
-            `${API_BASE}/translate/word?word=${encodeURIComponent(
+            buildApiUrl(`translate/word?word=${encodeURIComponent(
               word
-            )}&src_lang=${src}&tgt_lang=${tgt}`
+            )}&src_lang=${src}&tgt_lang=${tgt}`)
           );
 
     try {
@@ -177,7 +176,7 @@ const PlayGround = () => {
     setFrequencyMessage(null);
     try {
       const { lang, posTag, startRank, endRank } = frequencyState;
-      const url = `${API_BASE}/word_frequency/${posTag}?lang=${lang}&start_rank=${startRank}&end_rank=${endRank}`;
+      const url = buildApiUrl(`word_frequency/${posTag}?lang=${lang}&start_rank=${startRank}&end_rank=${endRank}`);
       const response = await fetch(url);
       const data = await response.json();
       if (!response.ok)
@@ -202,14 +201,14 @@ const PlayGround = () => {
 
     // Use the same parallel fetch pattern
     const fetchExamplesPromise = fetch(
-      `${API_BASE}/search/examples?word=${encodeURIComponent(
+      buildApiUrl(`search/examples?word=${encodeURIComponent(
         clickedWord
-      )}&corpus_lang=${lang}&limit=10`
+      )}&corpus_lang=${lang}&limit=10`)
     );
     const translateWordPromise = fetch(
-      `${API_BASE}/translate/word?word=${encodeURIComponent(
+      buildApiUrl(`translate/word?word=${encodeURIComponent(
         clickedWord
-      )}&src_lang=${lang}&tgt_lang=en`
+      )}&src_lang=${lang}&tgt_lang=en`)
     );
 
     try {
@@ -267,7 +266,7 @@ const PlayGround = () => {
     const sentenceToTranslate = sentences[index].replace(/<[^>]*>/g, "");
 
     try {
-      const response = await fetch(`${API_BASE}/translate`, {
+      const response = await fetch(buildApiUrl("translate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

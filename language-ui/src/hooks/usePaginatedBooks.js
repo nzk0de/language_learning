@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { buildApiUrl } from "../config/api";
 
-const API_BASE = "http://localhost:8000";
 const PAGE_SIZE = 20;
 
 const debounce = (func, delay) => {
@@ -23,9 +23,9 @@ export const usePaginatedBooks = () => {
   const fetchBooks = useCallback(async (term, pageNum) => {
     setIsLoading(true);
     try {
-      const url = `${API_BASE}/books?page=${pageNum}&limit=${PAGE_SIZE}&search=${encodeURIComponent(
+      const url = buildApiUrl(`books?page=${pageNum}&limit=${PAGE_SIZE}&search=${encodeURIComponent(
         term
-      )}`;
+      )}`);
       const response = await fetch(url);
       if (!response.ok) throw new Error("Failed to fetch books.");
 

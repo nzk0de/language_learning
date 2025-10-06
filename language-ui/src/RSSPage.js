@@ -31,6 +31,7 @@ import {
   Heart,
 } from "lucide-react";
 import "./RSSPageStyles.css";
+import { buildApiUrl } from "./config/api";
 
 const RSSPage = () => {
   // Core state
@@ -56,8 +57,6 @@ const RSSPage = () => {
   const [likedArticles, setLikedArticles] = useState(new Set());
   const [copiedLink, setCopiedLink] = useState(null);
   const [lastFetch, setLastFetch] = useState(null);
-
-  const API_BASE = "http://localhost:8000";
 
   // Intersection Observer for infinite scroll
   const observer = useRef();
@@ -96,7 +95,7 @@ const RSSPage = () => {
         ...(selectedLanguage && { language: selectedLanguage }),
       });
 
-      const response = await fetch(`${API_BASE}/rss/articles?${params}`);
+      const response = await fetch(buildApiUrl(`rss/articles?${params}`));
       const data = await response.json();
 
       if (response.ok) {
@@ -132,7 +131,7 @@ const RSSPage = () => {
   const triggerFetch = async () => {
     setFetchingNew(true);
     try {
-      const response = await fetch(`${API_BASE}/rss/fetch`, { method: "POST" });
+      const response = await fetch(buildApiUrl("rss/fetch"), { method: "POST" });
       const data = await response.json();
 
       if (response.ok) {

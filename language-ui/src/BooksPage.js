@@ -5,6 +5,7 @@ import Modal from "./components/Modal";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { BookCard } from "./components/BookCard";
 import { Pagination } from "./components/common/Pagination";
+import { buildApiUrl } from "./config/api";
 
 const BooksPage = () => {
   // The custom hook handles all fetching, searching, and pagination state.
@@ -42,7 +43,7 @@ const BooksPage = () => {
   const downloadBook = async (filename) => {
     try {
       const response = await fetch(
-        `http://localhost:8000/books/${encodeURIComponent(filename)}/download`
+        buildApiUrl(`books/${encodeURIComponent(filename)}/download`)
       );
       if (!response.ok) {
         const errorData = await response.json();
@@ -70,7 +71,7 @@ const BooksPage = () => {
     try {
       // This is the fetch call that was missing.
       const response = await fetch(
-        `http://localhost:8000/books/${encodeURIComponent(book.filename)}/open`,
+        buildApiUrl(`books/${encodeURIComponent(book.filename)}/open`),
         {
           method: "POST",
         }

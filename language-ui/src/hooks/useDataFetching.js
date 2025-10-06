@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-
-const API_BASE = "http://localhost:8000";
+import { API_BASE_URL } from "../config/api";
 
 export const useDataFetching = (endpoint) => {
   const [data, setData] = useState(null);
@@ -12,7 +11,7 @@ export const useDataFetching = (endpoint) => {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
+        const response = await fetch(`${API_BASE_URL}${endpoint}`);
         const result = await response.json();
         if (result.error) {
           throw new Error(result.error);

@@ -7,6 +7,7 @@ import {
   BookOpen,
   Download,
 } from "lucide-react";
+import { buildApiUrl } from "../config/api";
 
 // Pass the whole book object to onOpen, but just the filename to onDownload
 export const BookCard = ({ book, onOpen, onDownload }) => (
@@ -15,9 +16,9 @@ export const BookCard = ({ book, onOpen, onDownload }) => (
     <div className="relative h-56 bg-gradient-to-br from-indigo-50 to-pink-50 flex items-center justify-center">
       {book.cover_image ? (
         <img
-          src={`http://localhost:8000/books/${encodeURIComponent(
+          src={buildApiUrl(`books/${encodeURIComponent(
             book.filename
-          )}/cover`}
+          )}/cover`)}
           alt={`Cover of ${book.title}`}
           className="h-full w-full object-cover group-hover:scale-105 transition-transform"
         />
