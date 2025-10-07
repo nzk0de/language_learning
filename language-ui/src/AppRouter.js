@@ -5,13 +5,22 @@ import {
   Link,
   useLocation,
 } from "react-router-dom";
-import { Languages, Book, BarChart3, Maximize2, Globe } from "lucide-react";
+// ADDED the Bot icon
+import {
+  Languages,
+  Book,
+  BarChart3,
+  Maximize2,
+  Globe,
+  Bot,
+} from "lucide-react";
 import BooksPage from "./BooksPage";
 // import TranslationPage from "./TranslationPage";
 import PlayGround from "./PlayGround";
 import YoutubePage from "./YoutubePage";
 import RSSPage from "./RSSPage";
 import LandingPage from "./LandingPage";
+import ChatAssistant from "./components/chat/ChatAssistant";
 
 const Navigation = () => {
   const location = useLocation();
@@ -84,6 +93,18 @@ const Navigation = () => {
                 <Globe className="w-4 h-4" />
                 <span>RSS News</span>
               </Link>
+{/* 
+              <Link
+                to="/chat"
+                className={`px-4 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 transform hover:-translate-y-0.5 ${
+                  location.pathname === "/chat"
+                    ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25"
+                    : "text-gray-600 hover:text-indigo-600 hover:bg-indigo-50/80 hover:shadow-md"
+                }`}
+              >
+                <Bot className="w-4 h-4" />
+                <span>Assistant</span>
+              </Link> */}
             </div>
           </div>
 
@@ -113,7 +134,10 @@ const AppRouter = () => {
                 <Route path="/analysis" element={<PlayGround />} />
                 <Route path="/books" element={<BooksPage />} />
                 <Route path="/rss" element={<RSSPage />} />
+                {/* --- ADDED THIS ROUTE --- */}
+                {/* <Route path="/chat" element={<ChatAssistant />} /> */}
               </Routes>
+              <ChatAssistant />
             </div>
           }
         />

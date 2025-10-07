@@ -4,35 +4,118 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from time import sleep
 
+import ollama
 import stanza
-from googletrans import LANGUAGES
-from googletrans import Translator as GoogleTranslator
 
 
 class MYTranslator:
     def __init__(self) -> None:
-        self.translator = GoogleTranslator()
+        self.ollama_client = ollama.Client()
         self.executor = ThreadPoolExecutor(max_workers=4)
         # Initialize Stanza pipeline once
         self.stanza_nlp = stanza.Pipeline("en", processors="tokenize", verbose=False)
 
-        print("Google Translator initialized")
+        # Common language mappings for user-friendly names
+        self.language_map = {
+            "de": "German",
+            "en": "English",
+            "es": "Spanish",
+            "fr": "French",
+            "it": "Italian",
+            "pt": "Portuguese",
+            "ru": "Russian",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "zh": "Chinese",
+            "ar": "Arabic",
+            "hi": "Hindi",
+            "tr": "Turkish",
+            "nl": "Dutch",
+            "sv": "Swedish",
+            "da": "Danish",
+            "no": "Norwegian",
+            "fi": "Finnish",
+            "pl": "Polish",
+            "cs": "Czech",
+            "hu": "Hungarian",
+            "ro": "Romanian",
+            "bg": "Bulgarian",
+            "hr": "Croatian",
+            "sk": "Slovak",
+            "sl": "Slovenian",
+            "et": "Estonian",
+            "lv": "Latvian",
+            "lt": "Lithuanian",
+            "mt": "Maltese",
+            "el": "Greek",
+            "he": "Hebrew",
+            "th": "Thai",
+            "vi": "Vietnamese",
+            "id": "Indonesian",
+            "ms": "Malay",
+            "tl": "Filipino",
+            "uk": "Ukrainian",
+            "be": "Belarusian",
+            "mk": "Macedonian",
+            "sq": "Albanian",
+            "bs": "Bosnian",
+            "sr": "Serbian",
+            "me": "Montenegrin",
+            "is": "Icelandic",
+            "fo": "Faroese",
+            "ga": "Irish",
+            "gd": "Scottish Gaelic",
+            "cy": "Welsh",
+            "br": "Breton",
+            "eu": "Basque",
+            "ca": "Catalan",
+            "gl": "Galician",
+            "oc": "Occitan",
+        }
+
+        print("Ollama Translator initialized")
 
     @property
     def lang_codes(self) -> set:
-        # Get all supported Google Translate language codes
-        return set(LANGUAGES.keys())
+        # Return supported language codes
+        return set(self.language_map.keys())
 
     @property
     def supported_languages(self) -> dict:
-        # Get all supported languages with their names
-        return LANGUAGES.copy()
+        # Return supported languages with their names (reverse mapping)
+        return {code: name for code, name in self.language_map.items()}
 
     def _sync_translate(self, text: str, src: str, dest: str) -> str:
-        """Synchronous translation wrapper for thread execution"""
+        """Synchronous translation wrapper for thread execution using Ollama"""
+        try:
+            src_lang = self.language_map.get(src, src)
+            dest_lang = self.language_map.get(dest, dest)
 
-        result = self.translator.translate(text, src=src, dest=dest)
-        return result.text
+            prompt = f"""You are a professional translator. Translate the
+            following {src_lang} to  text from  {dest_lang} as accurately as possible.
+            PLease keep the time brackets intact (f.e. [00:03:36-00:03:57]
+            only and only if they  exist).
+            IMPORTANT RULES:
+            - Only return the translated text, nothing else
+            - Do not add explanations, comments, or additional context
+            - Preserve the original formatting and structure
+            - If the text is already in the target language, return it as is
+            - Maintain the same tone and style
+
+            Text to translate:
+            {text}
+
+            Translation:"""
+
+            response = self.ollama_client.chat(
+                model="llama3.2", messages=[{"role": "user", "content": prompt}]
+            )
+
+            return response["message"]["content"].strip()
+
+        except Exception as e:
+            print(f"Translation error: {e}")
+            return text  # Return original text if translation fails
 
     def translate_sync(self, text: str, src_lang: str, tgt_lang: str) -> str:
         """Synchronous version for backward compatibility"""
@@ -53,18 +136,16 @@ class MYTranslator:
 
     async def translate(self, text: str, src: str, dest: str) -> str:
         """
-        Async translation with Google API 5k character limit handling
+        Async translation with Ollama - handling long texts by chunking
         """
         if not text or not text.strip():
             return ""
 
-        # Clean text first
-
-        # If text is under 4500 chars (safe buffer), translate directly
-        if len(text) <= 4500:
+        # If text is under 3000 chars (safe for Ollama context), translate directly
+        if len(text) <= 3000:
             return await self._translate_single(text, src, dest)
 
-        # For long texts, split by sentences and group into chunks under 4500 chars
+        # For long texts, split by sentences and group into chunks under 3000 chars
         sentences = self.split_sentences(text)
         if not sentences:
             return ""
@@ -74,7 +155,7 @@ class MYTranslator:
 
         for sentence in sentences:
             # If adding this sentence would exceed limit, start new chunk
-            if len(current_chunk + " " + sentence) > 4500:
+            if len(current_chunk + " " + sentence) > 3000:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
                 current_chunk = sentence
@@ -85,12 +166,12 @@ class MYTranslator:
         if current_chunk:
             chunks.append(current_chunk.strip())
 
-        # Translate each chunk
+        # Translate each chunk with a small delay to avoid overwhelming Ollama
         translated_chunks = []
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             if chunk.strip():
-                # if should_sleep:
-                sleep(random.uniform(0.05, 0.1))
+                if i > 0:  # Add delay between chunks
+                    sleep(random.uniform(0.1, 0.3))
                 translated = await self._translate_single(chunk, src, dest)
                 if translated:
                     translated_chunks.append(translated)

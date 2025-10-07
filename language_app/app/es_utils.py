@@ -10,9 +10,10 @@ import aiohttp
 import feedparser
 import numpy as np
 import stanza
-from app.quality_checker import SentenceQualityChecker
 from bs4 import BeautifulSoup
 from elasticsearch import Elasticsearch, helpers
+
+from app.quality_checker import SentenceQualityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -209,9 +210,9 @@ class ElasticHelper:
             response = self.client.search(index=self.index_name, body=query)
 
             # Extract results
-            buckets = response["aggregations"]["words_by_pos"]["filter_pos"][
-                "word_frequency"
-            ]["buckets"]
+            buckets = response["aggregations"]["words_by_pos"]["filter_pos"]["word_frequency"][
+                "buckets"
+            ]
 
             # Filter to requested range (convert to 0-based indexing)
             start_idx = start_rank - 1
@@ -277,9 +278,7 @@ class ElasticHelper:
                                     "order": {"unique_words": "desc"},
                                 },
                                 "aggs": {
-                                    "unique_words": {
-                                        "cardinality": {"field": "tokens.lemma"}
-                                    }
+                                    "unique_words": {"cardinality": {"field": "tokens.lemma"}}
                                 },
                             }
                         },
@@ -428,9 +427,7 @@ class ElasticHelper:
             self.client.indices.create(index=self.rss_index_name, body=mapping)
             logger.info(f"Created RSS index: {self.rss_index_name}")
 
-    def load_rss_config(
-        self, config_path: str = "config/rss.json"
-    ) -> Dict[str, List[str]]:
+    def load_rss_config(self, config_path: str = "config/rss.json") -> Dict[str, List[str]]:
         """Load RSS feed URLs from configuration file."""
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -511,9 +508,7 @@ class ElasticHelper:
                 }
 
             # Process in chunks for long articles
-            logger.info(
-                f"Processing long text ({len(text)} chars) in chunks of {chunk_size}"
-            )
+            logger.info(f"Processing long text ({len(text)} chars) in chunks of {chunk_size}")
 
             all_sentences = []
             total_sentences = 0
@@ -523,9 +518,7 @@ class ElasticHelper:
             chunks = self._split_into_smart_chunks(text, chunk_size)
 
             for i, chunk in enumerate(chunks):
-                logger.debug(
-                    f"Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)"
-                )
+                logger.debug(f"Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
 
                 try:
                     doc = nlp_pipeline(chunk)
@@ -608,9 +601,7 @@ class ElasticHelper:
 
             async with session.get(feed_url, timeout=30) as response:
                 if response.status != 200:
-                    logger.warning(
-                        f"Failed to fetch {feed_url}: HTTP {response.status}"
-                    )
+                    logger.warning(f"Failed to fetch {feed_url}: HTTP {response.status}")
                     return []
 
                 content = await response.text()
@@ -662,9 +653,7 @@ class ElasticHelper:
 
                     # Use content if available, otherwise use description or summary
                     if not article["content"]:
-                        article["content"] = (
-                            article["description"] or article["summary"]
-                        )
+                        article["content"] = article["description"] or article["summary"]
 
                     articles.append(article)
 
@@ -726,9 +715,7 @@ class ElasticHelper:
 
                         for sent_idx, sentence in enumerate(doc_dict):
                             # Extract sentence text from tokens
-                            sentence_text = " ".join(
-                                [token["text"] for token in sentence]
-                            )
+                            sentence_text = " ".join([token["text"] for token in sentence])
 
                             # Quality check using shared quality checker
                             if not self.quality_checker.is_quality_sentence(
@@ -816,34 +803,24 @@ class ElasticHelper:
 
         async with aiohttp.ClientSession() as session:
             for language, feed_urls in config.items():
-                logger.info(
-                    f"Processing {len(feed_urls)} feeds for language: {language}"
-                )
+                logger.info(f"Processing {len(feed_urls)} feeds for language: {language}")
 
                 all_articles = []
 
                 # Fetch all feeds for this language
                 for feed_url in feed_urls:
-                    articles = await self.fetch_single_rss_feed(
-                        session, feed_url, language
-                    )
+                    articles = await self.fetch_single_rss_feed(session, feed_url, language)
                     all_articles.extend(articles)
 
                 # Store articles and insert into corpus
-                lang_results = await self.store_rss_articles_with_corpus_insertion(
-                    all_articles
-                )
+                lang_results = await self.store_rss_articles_with_corpus_insertion(all_articles)
 
                 # Update totals
-                results["totals"]["rss_articles_stored"] += lang_results[
-                    "rss_articles_stored"
-                ]
+                results["totals"]["rss_articles_stored"] += lang_results["rss_articles_stored"]
                 results["totals"]["corpus_sentences_added"] += lang_results[
                     "corpus_sentences_added"
                 ]
-                results["totals"]["sentences_filtered"] += lang_results[
-                    "sentences_filtered"
-                ]
+                results["totals"]["sentences_filtered"] += lang_results["sentences_filtered"]
 
                 logger.info(
                     f"Language {language}: {lang_results['rss_articles_stored']} articles,"

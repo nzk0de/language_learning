@@ -1,13 +1,15 @@
 # Configure logging
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, Optional
 
+import ollama
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.book_manager import BookManager
@@ -65,11 +67,22 @@ app = FastAPI(lifespan=lifespan)
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "*",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_cors_header_to_redirects(request, call_next):
+    response = await call_next(request)
+    if response.status_code in (301, 302, 307, 308):
+        response.headers["Access-Control-Allow-Origin"] = "https://dmh4qmsq-3000.euw.devtunnels.ms"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 
 # ---------- Dependencies ----------
@@ -564,6 +577,17 @@ class EmbeddingsAnalysisRequest(BaseModel):
     language: str = "de"
 
 
+# Chat Assistant Models
+class ChatMessage(BaseModel):
+    role: str  # 'user' or 'assistant'
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    conversation_history: list[ChatMessage] = []
+
+
 @app.post("/embeddings/analyze")
 async def analyze_sentence_commonality(request: EmbeddingsAnalysisRequest):
     """Analyze sentence to extract and rank most common words using embeddings."""
@@ -593,6 +617,108 @@ async def get_sort_methods():
         return {"sort_methods": analyzer.get_available_sort_methods()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting sort methods: {str(e)}")
+
+
+# German Teaching Assistant Chat Endpoints
+@app.post("/chat")
+async def chat_with_assistant(request: ChatRequest):
+    """Chat with the German teaching assistant using Ollama."""
+    try:
+        # System prompt for German teaching assistant
+        system_prompt = """You are a German teaching assistant.
+        Your role is to help users learn German effectively. You should:
+
+1. Always be encouraging and patient
+2. Provide clear explanations of German grammar, vocabulary, and usage
+3. Give examples when explaining concepts
+4. Correct mistakes gently and explain why something is wrong
+5. Suggest similar words or alternative expressions
+6. Help with pronunciation tips when relevant
+7. Adapt your responses to the user's apparent skill level
+8. Use a mix of English and German as appropriate for the context
+9. Be concise but thorough in your explanations
+
+Remember: You're here to make learning German enjoyable and accessible!"""
+
+        # Build the conversation history for Ollama
+        messages = [{"role": "system", "content": system_prompt}]
+
+        # Add conversation history
+        for msg in request.conversation_history:
+            messages.append({"role": msg.role, "content": msg.content})
+
+        # Add the current user message
+        messages.append({"role": "user", "content": request.message})
+
+        # Get response from Ollama
+        response = ollama.chat(model="llama3.2", messages=messages, stream=False)
+
+        assistant_response = response["message"]["content"]
+
+        return {"success": True, "response": assistant_response, "model": "llama3.2"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in chat: {str(e)}")
+
+
+@app.post("/chat/stream")
+async def chat_with_assistant_stream(request: ChatRequest):
+    """Stream chat response from the German teaching assistant."""
+    try:
+        # System prompt for German teaching assistant
+        system_prompt = """You are a German teaching assistant.
+        Your role is to help users learn German effectively. You should:
+
+1. Always be encouraging and patient
+2. Provide clear explanations of German grammar, vocabulary, and usage
+3. Give examples when explaining concepts
+4. Correct mistakes gently and explain why something is wrong
+5. Suggest similar words or alternative expressions
+6. Help with pronunciation tips when relevant
+7. Adapt your responses to the user's apparent skill level
+8. Use a mix of English and German as appropriate for the context
+9. Be concise but thorough in your explanations
+
+Remember: You're here to make learning German enjoyable and accessible!"""
+
+        # Build the conversation history for Ollama
+        messages = [{"role": "system", "content": system_prompt}]
+
+        # Add conversation history
+        for msg in request.conversation_history:
+            messages.append({"role": msg.role, "content": msg.content})
+
+        # Add the current user message
+        messages.append({"role": "user", "content": request.message})
+
+        def generate_stream():
+            try:
+                stream = ollama.chat(model="llama3.2", messages=messages, stream=True)
+
+                for chunk in stream:
+                    content = chunk["message"]["content"]
+                    if content:  # Only send non-empty content
+                        # Format as Server-Sent Events
+                        yield f"data: {json.dumps({'content': content, 'done': False})}\n\n"
+
+                # Send completion signal
+                yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
+
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in streaming chat: {str(e)}")
 
 
 # Make RSS fetch completely async and non-blocking

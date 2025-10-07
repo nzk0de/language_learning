@@ -8,7 +8,7 @@
 // Configuration options
 const config = {
   development: {
-    apiBaseUrl: 'https://dmh4qmsq-8000.euw.devtunnels.ms',
+    apiBaseUrl: 'https://fallen-equipment-chat-maritime.trycloudflare.com', // Local development server
   },
   production: {
     apiBaseUrl: 'https://your-production-domain.com', // Update this when you deploy
