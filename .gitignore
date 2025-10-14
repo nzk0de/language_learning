@@ -5,3 +5,4 @@ __pycache__/
 dev/
 german_books/
 node_modules/
+*.log/

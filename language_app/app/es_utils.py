@@ -9,6 +9,7 @@ from typing import Dict, List
 import aiohttp
 import feedparser
 import numpy as np
+import ollama
 import stanza
 from bs4 import BeautifulSoup
 from elasticsearch import Elasticsearch, helpers
@@ -35,6 +36,9 @@ class ElasticHelper:
         # Initialize German Stanza pipeline for RSS processing
         self.stanza_nlp_de = None
 
+        # Initialize Ollama client for sentence improvement and translation
+        self.ollama_client = ollama.Client()
+
     def split_sentences(self, text: str) -> list[str]:
         """Split text into sentences using Stanza"""
         if not text.strip():
@@ -50,15 +54,94 @@ class ElasticHelper:
 
     # In ElasticHelper class inside es_utils.py
 
+    def improve_sentence_with_ollama(self, sentence: str, target_word: str) -> str:
+        """
+        Improve sentence syntax and clarity using Ollama while preserving the target word.
+        """
+        try:
+            # Remove highlighting markup first
+            clean_sentence = re.sub(r"</?mark>", "", sentence)
+
+            prompt = f"""You are a German language expert.
+            Your task is to improve the following German
+              sentence to make it more syntactically correct and better for language learning,
+             while preserving the meaning and keeping the word "{target_word}"
+               highlighted with <mark> tags.
+
+IMPORTANT RULES:
+1. Keep the sentence in German
+2. Maintain the original meaning
+3. Improve grammar and syntax for clarity
+4. Make it more suitable for language learning
+5. Keep the word "{target_word}" and highlight it with <mark>{target_word}</mark>
+6. Return ONLY the improved sentence, nothing else
+
+Original sentence: {clean_sentence}
+
+Improved sentence:"""
+
+            response = self.ollama_client.chat(
+                model="llama3.2", messages=[{"role": "user", "content": prompt}]
+            )
+
+            improved_sentence = response["message"]["content"].strip()
+
+            # Ensure the target word is properly highlighted
+            if target_word in improved_sentence and "<mark>" not in improved_sentence:
+                improved_sentence = improved_sentence.replace(
+                    target_word, f"<mark>{target_word}</mark>", 1
+                )
+
+            return improved_sentence
+
+        except Exception as e:
+            logger.error(f"Error improving sentence with Ollama: {e}")
+            return sentence  # Return original if improvement fails
+
+    def translate_sentence_with_ollama(self, sentence: str, target_lang: str = "en") -> str:
+        """
+        Translate sentence using Ollama.
+        """
+        try:
+            # Remove highlighting markup for translation
+            clean_sentence = re.sub(r"</?mark>", "", sentence)
+
+            lang_names = {"en": "English", "de": "German", "es": "Spanish", "fr": "French"}
+
+            target_lang_name = lang_names.get(target_lang, "English")
+
+            prompt = f"""You are a professional translator. Translate the following
+            German sentence to {target_lang_name} accurately while preserving the meaning and tone.
+
+IMPORTANT RULES:
+1. Return ONLY the translation, nothing else
+2. Maintain the same tone and style
+3. Keep the translation natural and fluent
+4. Do not add explanations or comments
+
+German sentence: {clean_sentence}
+
+{target_lang_name} translation:"""
+
+            response = self.ollama_client.chat(
+                model="llama3.2", messages=[{"role": "user", "content": prompt}]
+            )
+
+            return response["message"]["content"].strip()
+
+        except Exception as e:
+            logger.error(f"Error translating sentence with Ollama: {e}")
+            return ""  # Return empty string if translation fails
+
     def search_examples(self, word: str, lang: str, limit: int = 5):
         """
-        Optimized search for example sentences.
-        This version prioritizes speed by using a simpler query first.
-        Only returns sentences that contain at least one verb.
+        Optimized search for example sentences with Ollama improvements.
+        Returns sentences that contain at least one verb AND have a nominative subject,
+        improved with better syntax and translations.
         """
         try:
             query = {
-                "size": limit,
+                "size": limit * 2,  # Get more results to filter better ones
                 "query": {
                     "bool": {
                         "must": [
@@ -73,10 +156,25 @@ class ElasticHelper:
                                     "type": "best_fields",
                                 }
                             },
+                            # Require at least one VERB token
                             {
                                 "nested": {
                                     "path": "tokens",
                                     "query": {"term": {"tokens.upos": "VERB"}},
+                                }
+                            },
+                            # Require at least one nominative subject
+                            {
+                                "nested": {
+                                    "path": "tokens",
+                                    "query": {
+                                        "bool": {
+                                            "must": [
+                                                {"term": {"tokens.deprel": "nsubj"}},
+                                                {"wildcard": {"tokens.feats": "*Case=Nom*"}},
+                                            ]
+                                        }
+                                    },
                                 }
                             },
                         ]
@@ -95,27 +193,46 @@ class ElasticHelper:
 
             res = self.client.search(index=self.index_name, body=query)
 
-            examples = [
-                {
-                    "sentence": hit.get("highlight", {}).get(
-                        "sentence_text", [hit["_source"]["sentence_text"]]
-                    )[0],
+            examples = []
+            processed_count = 0
+
+            for hit in res["hits"]["hits"]:
+                if processed_count >= limit:
+                    break
+
+                original_sentence = hit.get("highlight", {}).get(
+                    "sentence_text", [hit["_source"]["sentence_text"]]
+                )[0]
+
+                # Check quality score before processing
+
+                # Improve sentence with Ollama
+                improved_sentence = self.improve_sentence_with_ollama(original_sentence, word)
+
+                # Get translation
+                # translation = self.translate_sentence_with_ollama(improved_sentence, "en")
+
+                example = {
+                    "sentence": improved_sentence,
+                    "original_sentence": original_sentence,
                     "lang": lang,
                     "title": hit["_source"].get("title"),
                     "sentence_id": hit["_source"].get("sentence_id"),
                     "translation": None,
-                    "translation_lang": None,
+                    "translation_lang": "en",
                 }
-                for hit in res["hits"]["hits"]
-            ]
+
+                examples.append(example)
+                processed_count += 1
+
             return examples
 
         except Exception as e:
-            print(f"Error searching corpus: {e}")
+            logger.error(f"Error searching corpus: {e}")
             return self._fallback_search(word, lang, limit)
 
     def _fallback_search(self, word: str, lang: str, limit: int = 5):
-        """Fallback to old sentence index if corpus not available"""
+        """Fallback to old sentence index if corpus not available, with Ollama improvements"""
         try:
             res = self.client.search(
                 index=self.index_name,
@@ -123,7 +240,12 @@ class ElasticHelper:
                 size=limit * 2,
             )
             examples = []
+            processed_count = 0
+
             for hit in res["hits"]["hits"]:
+                if processed_count >= limit:
+                    break
+
                 source = hit["_source"]
                 sentence_text = source["sentence"]
 
@@ -131,20 +253,36 @@ class ElasticHelper:
                 if not self.is_quality_sentence(sentence_text):
                     continue
 
-                example = {
-                    "sentence": sentence_text,
-                    "lang": source.get("lang", lang),
-                    "title": None,
-                    "sentence_id": None,
-                    "highlighted": None,
-                    "translation": source.get("translation"),
-                    "translation_lang": source.get("translation_lang"),
-                }
-                examples.append(example)
+                # Check quality score
+                quality_score = self.quality_checker.evaluate_sentence_quality(sentence_text, lang)
 
-                # Stop when we have enough quality examples
-                if len(examples) >= limit:
-                    break
+                # Only process sentences with decent quality (>= 50)
+                if quality_score >= 50:
+                    # Highlight the word first
+                    highlighted_sentence = sentence_text.replace(word, f"<mark>{word}</mark>", 1)
+
+                    # Improve sentence with Ollama
+                    improved_sentence = self.improve_sentence_with_ollama(
+                        highlighted_sentence, word
+                    )
+
+                    # Get translation if not already available
+                    translation = source.get("translation")
+                    if not translation:
+                        translation = self.translate_sentence_with_ollama(improved_sentence, "en")
+
+                    example = {
+                        "sentence": improved_sentence,
+                        "original_sentence": sentence_text,
+                        "lang": source.get("lang", lang),
+                        "title": None,
+                        "sentence_id": None,
+                        "translation": translation,
+                        "translation_lang": source.get("translation_lang", "en"),
+                        "quality_score": quality_score,
+                    }
+                    examples.append(example)
+                    processed_count += 1
 
             return examples
         except Exception as e:
