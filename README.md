@@ -38,27 +38,6 @@ An intelligent language learning system that:
 
 ---
 
-## 🚀 Quick Start
-
-### Prerequisites
-- Python 3.8+, Node.js 16+
-- Elasticsearch running on localhost:9200
-- Ollama with LLaMA 3.2 model
-
-### Setup
-```bash
-# Backend
-cd language_app
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Frontend  
-cd language-ui
-npm install && npm start
-```
-
----
-
 ## 📚 Current Features
 
 ### Content Processing
